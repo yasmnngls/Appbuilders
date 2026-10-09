@@ -95,3 +95,32 @@ JS heap after both landmarkers: 23–28 MB (`performance.memory.usedJSHeapSize`)
 | Webcam, permission denied | "Camera access was not granted…" |
 | Webcam, no camera (getUserMedia → `NotFoundError`, simulated) | "No camera was found on this laptop." |
 | Window capture | headless with auto-selected "Entire screen": stream had 1 video and 1 audio track, "Speech context available". A single meeting window on a real desktop: PENDING MANUAL RUN |
+
+## Local speech recognition (whisper.cpp)
+
+Measured 2026-10-10 on the tested laptop: Intel Core i5-13420H (8 cores / 12 threads), NVIDIA RTX 3050 Laptop 4 GB, 7.7 GB RAM, Windows 11.
+whisper.cpp official prebuilt release `b5454` (`whisper-bin-x64.zip`, CPU; `whisper-bin-win-cuda-12.4.0-x64.zip` for the GPU check), models `ggml-tiny.en.bin` (74 MB) and `ggml-base.en.bin` (141 MB) from huggingface.co/ggerganov/whisper.cpp. Installed with `npm run whisper:setup`.
+
+**Method** (`npm run bench:whisper`, script `scripts/bench-whisper.mjs`):
+- Test speech generated offline with Windows SAPI (`scripts/whisper-tts.ps1`, written directly as 16 kHz 16-bit mono WAV):
+  question "Tell me about a difficult project you've worked on." (3.4 s) and answer "I worked on a web application with my team. The backend was difficult, but eventually we finished it." (12.7 s, slowed SAPI rate).
+- A fresh `whisper-server` per model on 127.0.0.1, 4 threads, `-l en -nt`, CPU (`-ng`). Each utterance is POSTed to `/inference` as multipart WAV (`response_format=json`, `temperature=0`). Latency is the full HTTP round trip.
+- "First request" = first request for that utterance after the server started; then 5 warm runs, p50 reported.
+- RAM = server working set (`tasklist`), idle after load and the peak sampled during all requests.
+- Accuracy = word error rate against the reference text (case and punctuation ignored).
+
+| Model (CPU, 4 threads) | Ollama | Load | RAM idle / peak | Question 3.4 s: first / warm p50 | Answer 12.7 s: first / warm p50 | WER |
+|---|---|---|---|---|---|---|
+| tiny.en | not loaded | 0.39 s | 126 / 167 MB | 403 / 503 ms | 499 / 548 ms | 0% / 0% |
+| base.en | not loaded | 0.68 s | 206 / 256 MB | 1203 / 1355 ms | 1091 / 1441 ms (warm runs up to 2606 ms) | 0% / 0% |
+| tiny.en | qwen2.5:3b loaded (2.2 GB, 100% GPU, idle) | 0.29 s | 126 / 169 MB | 572 / 509 ms | 584 / 640 ms | 0% / 0% |
+| base.en | qwen2.5:3b loaded (idle) | 0.58 s | 206 / 259 MB | 1810 / 1290 ms | 1354 / 1414 ms | 0% / 0% |
+
+Both models transcribed both utterances word for word ("Tell me about a difficult project you've worked on." / "I worked on a web application with my team. The backend was difficult, but eventually we finished it.").
+
+**GPU check (optional CUDA build, tiny.en, Ollama loaded):** it works. Load 3.4 s, first request 462 ms, then warm p50 51 ms (question) and 75 ms (answer), WER 0%. RAM 294 / 448 MB. Total VRAM with qwen2.5:3b and whisper tiny.en both loaded was 2456 of 4096 MiB (2161 MiB with Ollama alone). Whisper on the GPU *while the LLM is generating* was not measured: PENDING MANUAL RUN.
+
+**Choice: `tiny.en` on CPU, 4 threads** (the default of `npm run whisper`). It is the smallest model, its accuracy on these clean utterances was the same as base.en (0% WER), and it handles a 12.7 s answer in about 0.5–0.65 s, well under the 2 s target. base.en was 2–3× slower with spikes up to 2.6 s and gave no accuracy gain here. Running on the CPU leaves the 4 GB GPU to the LLM; `WHISPER_GPU=1 npm run whisper` switches to the CUDA build if it is installed (`npm run whisper:setup -- -Cuda`).
+Not measured: accuracy on real microphone or meeting audio with accents and noise (SAPI speech is clean), and latency while the LLM is generating at the same time: PENDING MANUAL RUN.
+
+**Network check:** during inference, `netstat -ano` for the whisper-server PID showed only `LISTENING 127.0.0.1:<port>` and loopback `ESTABLISHED` connections from the benchmark client: no non-loopback bind and no non-loopback remote peer (all four runs and the CUDA run). The server binds to 127.0.0.1 only (`--host 127.0.0.1`), and the browser reaches it only through the same-origin `/whisper` Vite proxy.
