@@ -364,6 +364,9 @@ function onSegment(seg: SpokenSegment) {
   }
 }
 
+/** Feeds one transcribed utterance as if it came from the pipelines (tests and dev harness). */
+export const ingestSegment = (seg: SpokenSegment) => onSegment(seg);
+
 /** Speech transitions → status + the pauses ring (last 120 s, open pause last). */
 function onSpeech(state: "speaking" | "pause", t: SessionTime) {
   if (state === "pause") {
@@ -456,7 +459,7 @@ function requestSuggestion(momentId: string) {
       // The model is called once the Candidate's utterance ends, on the latest transcript.
       sug = signal?.aborted
         ? fallbackSuggestion(s, m)
-        : await writeSuggestion(s, m, signal, { candidateSpeaking: () => store.get().speech === "speaking", latest: () => store.get().session });
+        : await writeSuggestion(s, m, signal, { candidateSpeaking, latest: () => store.get().session });
     } catch {
       sug = fallbackSuggestion(s, m);
     }
