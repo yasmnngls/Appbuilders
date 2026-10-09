@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import { FLAG_LABELS, type FlagKind, type Moment, type Session } from "./domain/types";
 import { CONTRACT_SYSTEM } from "./llm/contract";
 import { findBanned } from "./llm/guard";
-import { fallbackSuggestion } from "./llm/moments";
+import { allAskedReason, coveredReason, fallbackSuggestion, MODEL_COVERED_REASON, NO_TRANSCRIPT_REASON, tooBriefReason } from "./llm/moments";
+import { analyzeAnswer, gapTemplate } from "./context/gaps";
+import { CASES } from "./context/testing/followUpCases";
 import { fallbackReport, toJSON, toMarkdown } from "./llm/report";
 
 const SOURCES = import.meta.glob(["./**/*.{ts,tsx}", "!./**/*.test.{ts,tsx}", "!./llm/guard.ts", "!./**/testing/**"], {
@@ -93,10 +95,19 @@ describe("language (PRD §18.1)", () => {
     for (const kind of Object.keys(FLAG_LABELS) as FlagKind[]) {
       for (const followUpNumber of [1, 2]) {
         const sug = fallbackSuggestion(s, sampleMoment(kind, followUpNumber));
-        expect(findBanned(`${sug.note} ${sug.followUp}`)).toEqual([]);
-        expect(sug.quality.neutral).toBe(true);
+        expect(findBanned(`${sug.note} ${sug.followUp ?? ""} ${sug.reasoning.reason}`)).toEqual([]);
+        expect(sug.followUp).not.toBeNull();
+        expect(sug.quality?.neutral).toBe(true);
       }
     }
+    // Gap templates (with and without a topic), the analyzer's reasons and every no-follow-up line.
+    for (const c of CASES) {
+      for (const g of ["personal", "steps", "outcome"] as const) expect(findBanned(gapTemplate(g, c.answer))).toEqual([]);
+      expect(findBanned(analyzeAnswer(c.answer).gaps.map((g) => g.reason).join(" "))).toEqual([]);
+    }
+    for (const g of ["personal", "steps", "outcome"] as const) expect(findBanned(gapTemplate(g, "We did a lot of things over many weeks and it was fine."))).toEqual([]);
+    for (const line of [NO_TRANSCRIPT_REASON, tooBriefReason(3), coveredReason(["the situation", "the result"]), allAskedReason(["outcome"]), MODEL_COVERED_REASON])
+      expect(findBanned(line)).toEqual([]);
     const r = fallbackReport(s);
     expect(findBanned([r.summary, ...r.perQuestion.flatMap((p) => [p.observation, p.followUp ?? ""])].join("\n"))).toEqual([]);
     expect(findBanned(toMarkdown(s))).toEqual([]);
@@ -127,9 +138,11 @@ describe("privacy (§13.4)", () => {
     expect(toJSON(sampleSession())).not.toMatch(/data:image|blob:/);
   });
 
-  it("only llm/ollama.ts calls fetch", () => {
+  /** The only network clients: the local Ollama and the local whisper.cpp server, both reached through same-origin dev proxies. */
+  const LOCAL_CLIENTS = ["./llm/ollama.ts", "./asr/whisperClient.ts"];
+  it("only the local model clients call fetch", () => {
     const callers = Object.entries(SOURCES)
-      .filter(([path, src]) => path !== "./llm/ollama.ts" && /(^|[^.\w])fetch\s*\(/.test(src.replace(/\/\/.*$/gm, "")))
+      .filter(([path, src]) => !LOCAL_CLIENTS.includes(path) && /(^|[^.\w])fetch\s*\(/.test(src.replace(/\/\/.*$/gm, "")))
       .map(([path]) => path);
     expect(callers).toEqual([]);
   });
@@ -151,7 +164,7 @@ function sampleSession(): Session {
     baseline,
     questions: [
       { id: "q1", number: 1, label: "Introduction", start: 0 },
-      { id: "q2", number: 2, label: "Tell me about a difficult project", start: 60000 },
+      { id: "q2", number: 2, label: "Tell me about a difficult project", start: 60000, origin: "spoken", text: "Tell me about a difficult project you worked on." },
     ],
     flags: [
       { id: "f1", kind: "off-screen", start: 70000, end: 75000, questionId: "q2", evidence: { baseline, thresholdDeg: { x: 10, y: 10 }, peakDeviationDeg: 14, direction: "left" } },
@@ -163,7 +176,10 @@ function sampleSession(): Session {
     followUp: { questionId: "q2", phase: "observing", used: 1, reObserveUntil: null, momentId: null, watchFrom: 0, askedMomentId: null },
     timeline: [{ t: 60000, kind: "question", questionId: "q2", text: "Q2 started" }],
     report: null,
-    transcript: [],
-    asr: { available: false, model: null },
+    transcript: [
+      { id: "t1", speaker: "interviewer", start: 60000, end: 62000, text: "Tell me about a difficult project you worked on.", questionId: "q2" },
+      { id: "t2", speaker: "candidate", start: 63000, end: 70000, text: "I worked on a web application with my team. The backend was difficult, but eventually we finished it.", questionId: "q2" },
+    ],
+    asr: { available: true, model: "whisper-base.en" },
   };
 }
