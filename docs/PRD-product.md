@@ -1,6 +1,6 @@
 # Local AI Interview Assistant — Product Requirements Document
 
-**Version:** 1.2  
+**Version:** 1.3 (architecture update 2026-10-10: local transcript context; see §14 and §28)  
 **Status:** Hackathon MVP / Build Specification  
 **Event:** AppBuildersPH Hackathon 2026  
 **Theme:** Local AI  
@@ -599,6 +599,29 @@ Full transcription is not required for this requirement. If audio is unavailable
 
 ---
 
+## FR-005B — Local Speech Recognition (conversation context)
+
+**Priority:** P0 (added in v1.3)
+
+A visual Flag can say that a moment may be worth exploring, but it cannot say what to ask. The follow-up must come from the conversation.
+
+The system captures two logical audio sources locally:
+
+- **Interviewer microphone:** the Interviewer's questions.
+- **Interview audio:** the meeting's tab/system audio, or the local video file's audio, which carries the Candidate's answers.
+
+Speakers are separated by source, not by voice. With a single shared microphone (in-person webcam), segments are labelled "mixed".
+
+A local speech-recognition model (whisper.cpp, running on this laptop) transcribes finished utterances in short chunks.
+
+- Audio is never stored and never sent to a cloud transcription service.
+- The transcript is text kept in memory until export.
+- The local LLM receives only a small context window (current Question, the Candidate's current answer, recent exchange, previous follow-ups), never the whole interview and never raw audio.
+
+If speech recognition is unavailable, Flags and the evidence gate still work. However, no content follow-up is suggested, because it could not be grounded in the answer.
+
+---
+
 ## FR-006 — Flag Engine
 
 **Priority:** P0
@@ -626,7 +649,7 @@ A Flag does not automatically become a follow-up suggestion. It must first pass 
 
 **Priority:** P0
 
-The Interviewer must be able to mark a new Question.
+The current Question is detected automatically from the Interviewer's transcribed speech (e.g. "Tell me about a difficult project you've worked on."). Speech said right after the Interviewer chose Ask Follow-up is treated as the follow-up, not a new Question. A manual "Mark new question" control remains as a fallback.
 
 ### Requirements
 
@@ -720,6 +743,7 @@ A local language model must generate a short Interviewer Note from:
 
 - recent Flags,
 - current Question,
+- the Candidate's answer to the current Question (local transcript, when available),
 - follow-up count,
 - relevant observation context,
 - the reason the evidence gate was satisfied.
@@ -742,6 +766,9 @@ The Note must remain neutral and grounded in observations.
 
 The local LLM must generate a follow-up question that is:
 
+- driven by the conversation, not by the Flag: it targets one specific missing or unclear area of the Candidate's answer to the current Question (for example personal contribution, specific steps, or outcome),
+- not suggested at all when the answer already covers the Question, even if a Flag fired,
+- never a repeat of a previous follow-up, and never about eyes, screen, notes, or reading,
 - neutral,
 - grounded in the current Question,
 - specific enough to be useful,
@@ -1103,6 +1130,29 @@ For the hackathon Offline Test, use **Local Webcam** or **Local Video** so the c
 
 # 14. AI / System Architecture
 
+**v1.3 pipeline (current).** Vision decides *whether* a moment may be worth exploring; the conversation decides *what* to ask.
+
+```text
+ Interviewer mic   Interview audio (tab/system)   Candidate video
+        │                 │                             │
+        └──── LOCAL SPEECH RECOGNITION ────┐      LOCAL VISION AI
+              (whisper.cpp, chunked)       │            │
+                        │                  │         Signals
+                   Transcript              │            │
+              (question detection)         │   BASELINE + RULES + SPEECH
+                        │                  │   ACTIVITY + EVIDENCE GATE
+                        └──── CONTEXT ENGINE ◄──────────┘
+             (Question + answer + previous follow-ups + gap check)
+                                 │
+                 Worth exploring AND a real information gap?
+                       │ no                     │ yes
+                  no follow-up             LOCAL LLM → one targeted follow-up
+                                                │
+                              INTERVIEWER: Ask / Continue / Dismiss → re-observe → stop
+```
+
+The original v1.2 diagram follows for reference:
+
 ```text
                  CANDIDATE VIDEO
                        │
@@ -1312,6 +1362,7 @@ The following are core local functionality:
 - Vision inference
 - Signal extraction
 - Local speech activity context when audio is available
+- Local speech recognition (transcript) of the Interviewer's and the Candidate's audio
 - Baseline calculation
 - Flag generation
 - Temporal/contextual evidence gating
@@ -1356,7 +1407,7 @@ Flags
 Local LLM
 ```
 
-Raw Candidate video should not be sent to a cloud AI service for the core analysis.
+Raw Candidate video should not be sent to a cloud AI service for the core analysis. Raw audio must not be sent to a cloud transcription service; the transcript stays on the device and is only included in a JSON export the Interviewer chooses to make.
 
 The Session Report should contain observations and interview context, not Candidate images.
 
@@ -1867,6 +1918,34 @@ The local LLM should receive structured context rather than raw video.
   }
 }
 ```
+
+### v1.3 contract (current)
+
+The model receives conversation context; the Flag is context only and never decides the wording:
+
+```json
+{
+  "question": "Tell me about a difficult project you've worked on.",
+  "candidate_answer": "I worked on a web application with my team. The backend was difficult, but eventually we finished it.",
+  "previous_follow_ups": [],
+  "gaps": ["personal contribution", "specific steps"],
+  "observation": "reading-like gaze pattern (context only)",
+  "follow_up_count": 0,
+  "max_follow_ups": 2
+}
+```
+
+```json
+{
+  "answer_covers_question": false,
+  "gap": "personal contribution",
+  "reason": "The answer describes the team's work but not what the Candidate personally did on the backend.",
+  "follow_up": "What specifically did you do when the backend problems came up?",
+  "interviewer_note": "A reading-like gaze pattern was observed during Q2."
+}
+```
+
+If the answer covers the Question, `follow_up` is null and nothing is suggested.
 
 The model must not output:
 
