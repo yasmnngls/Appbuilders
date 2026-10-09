@@ -1,8 +1,8 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { finish, newQuestion, resetBaseline } from "../app/controller";
-import { FLAG_LABELS, type Flag, type Moment, type Question } from "../domain/types";
+import { FLAG_LABELS, type Flag, type Moment, type Question, type Speaker } from "../domain/types";
 import { formatTime } from "../llm/notes";
-import { currentQuestion, MAX_LABEL_LENGTH, selectScreen, sessionNow, setOpenFlag, store, useStore } from "../store/session";
+import { currentQuestion, selectScreen, sessionNow, setOpenFlag, store, useStore } from "../store/session";
 import { FlagDetails } from "./FlagDetails";
 import { FollowUpCard } from "./FollowUpCard";
 import { VideoPanel } from "./VideoPanel";
@@ -21,6 +21,7 @@ export function LiveScreen() {
       <aside className="flex min-h-0 flex-col gap-4">
         <FollowUpCard />
         <CurrentQuestion />
+        <LiveContext />
         <Recent />
         <div className="flex gap-2">
           <button
@@ -76,14 +77,7 @@ function useTick() {
 function CurrentQuestion() {
   useTick();
   const question = useStore((s) => currentQuestion(s.session!));
-  const [label, setLabel] = useState("");
-  const inputId = useId();
   const now = sessionNow();
-
-  const next = () => {
-    newQuestion(label.trim() || undefined);
-    setLabel("");
-  };
 
   return (
     <section aria-label="Current Question" className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -94,33 +88,68 @@ function CurrentQuestion() {
           <span className="text-zinc-600"> · session {formatTime(now)}</span>
         </span>
       </div>
-      <div className="mt-1 text-lg font-medium">
-        Q{question.number} · {question.label}
-      </div>
-      <div className="mt-3 flex gap-2">
-        <label htmlFor={inputId} className="sr-only">
-          Next Question label
-        </label>
-        <input
-          id={inputId}
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              next();
-              e.currentTarget.blur();
-            } else if (e.key === "Escape") e.currentTarget.blur();
-          }}
-          placeholder="Next Question label (optional)"
-          autoComplete="off"
-          maxLength={MAX_LABEL_LENGTH}
-          className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
-        />
-        <button type="button" onClick={next} className="press shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400">
-          + New Question <kbd className="ml-1 rounded bg-emerald-700/40 px-1 text-xs">N</kbd>
+      <div className="mt-1 flex items-start justify-between gap-3">
+        <div className="min-w-0 text-lg font-medium">
+          Q{question.number} · {question.label}
+        </div>
+        <button
+          type="button"
+          onClick={() => newQuestion()}
+          title="Fallback: Questions are normally picked up from what you ask."
+          className="press mt-0.5 shrink-0 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500"
+        >
+          Mark new question <kbd className="ml-1 rounded bg-zinc-800 px-1 text-[10px]">N</kbd>
         </button>
       </div>
     </section>
+  );
+}
+
+const SPEAKER: Record<Speaker, string> = { interviewer: "Interviewer", candidate: "Candidate", mixed: "Speaker" };
+
+/** Quiet live context: what was last said, the Question as asked, and whether the app is listening/observing. */
+function LiveContext() {
+  const lines = useStore((s) => s.session!.transcript.slice(-4));
+  const question = useStore((s) => currentQuestion(s.session!));
+  const asrOn = useStore((s) => s.session!.asr.available);
+  const listening = useStore((s) => s.listening);
+  const observing = useStore((s) => s.fps > 0);
+
+  return (
+    <section aria-label="Live context" className="rounded-xl border border-zinc-800/70 px-4 py-3 text-sm">
+      <div className="flex items-center justify-between text-xs uppercase tracking-wide text-zinc-500">
+        <span>Live context</span>
+        <span className="flex gap-3 normal-case tracking-normal">
+          <Indicator on={listening}>Listening</Indicator>
+          <Indicator on={observing}>Observing</Indicator>
+        </span>
+      </div>
+      {question.text && <p className="mt-2 text-zinc-300">“{question.text}”</p>}
+      {!asrOn ? (
+        <p className="mt-2 text-zinc-500">
+          Local speech recognition is off — follow-ups need a transcript. Start it with <code>npm run whisper</code>.
+        </p>
+      ) : lines.length === 0 ? (
+        <p className="mt-2 text-zinc-500">Nothing transcribed yet.</p>
+      ) : (
+        <ol className="mt-2 flex flex-col gap-1">
+          {lines.map((l) => (
+            <li key={l.id} className="line-clamp-2 text-zinc-400">
+              <span className={l.speaker === "candidate" ? "text-zinc-200" : "text-zinc-300"}>{SPEAKER[l.speaker]}:</span> {l.text}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function Indicator({ on, children }: { on: boolean; children: React.ReactNode }) {
+  return (
+    <span className={`flex items-center gap-1.5 ${on ? "text-emerald-300" : "text-zinc-500"}`}>
+      <span aria-hidden className={`size-1.5 rounded-full ${on ? "bg-emerald-400" : "bg-zinc-600"}`} />
+      {children}
+    </span>
   );
 }
 
