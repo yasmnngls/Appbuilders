@@ -172,16 +172,16 @@ function BaselineOverlay() {
   const [noFace, setNoFace] = useState(false);
 
   // "Baseline ready ✓" for 1.5 s, then fade. Timed here too so it never sticks if the flag isn't cleared.
+  // The timers must survive the controller clearing the flag (also at 1.5 s), so they are only cancelled
+  // on unmount or when a new completion restarts them.
+  const readyTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => {
     if (!justCompleted) return;
+    readyTimers.current.forEach(clearTimeout);
     setReady("shown");
-    const a = setTimeout(() => setReady("fading"), READY_MS);
-    const b = setTimeout(() => setReady("hidden"), READY_MS + 300);
-    return () => {
-      clearTimeout(a);
-      clearTimeout(b);
-    };
+    readyTimers.current = [setTimeout(() => setReady("fading"), READY_MS), setTimeout(() => setReady("hidden"), READY_MS + 300)];
   }, [justCompleted]);
+  useEffect(() => () => readyTimers.current.forEach(clearTimeout), []);
 
   useEffect(() => {
     if (faceSeen) lastFace.current = Date.now();

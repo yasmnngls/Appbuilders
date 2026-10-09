@@ -115,7 +115,11 @@ export async function openSource(kind: Session["source"], file?: File): Promise<
     detachSource = () => track?.removeEventListener("ended", onEnded);
     video.srcObject = s;
   }
+  const opened = stream;
   await video.play().catch(() => {});
+  // The Source can end (or be replaced) while play() is pending; don't show a preview that is gone.
+  if (stream !== opened || (kind !== "video" && !opened?.getVideoTracks().some((t) => t.readyState === "live")))
+    throw new Error("The source stopped before the preview started. Try again.");
   S.setSourceReady({ kind, hasAudio: hasAudio(stream) });
 }
 

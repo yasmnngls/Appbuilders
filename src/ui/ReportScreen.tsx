@@ -49,7 +49,9 @@ export function ReportScreen() {
   const lightweight = useStore((s) => s.lightweight);
   const report = session.report;
   const journeys = buildJourneys(session);
-  const stamp = new Date(session.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  // Local time, matching the Date shown in the report (toISOString would be UTC).
+  const started = new Date(session.startedAt);
+  const stamp = new Date(started.getTime() - started.getTimezoneOffset() * 60_000).toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const base = `${slug(session.candidateName)}-${stamp}`;
   const length = (session.endedAt ?? session.startedAt) - session.startedAt;
   const ready = !!report;
