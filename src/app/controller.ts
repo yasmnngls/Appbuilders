@@ -377,7 +377,7 @@ export async function finish(): Promise<void> {
   closeSource();
   live.result = null;
   S.endSession();
-  store.set({ baselineJustCompleted: false });
+  store.set({ baselineJustCompleted: false, fps: 0, latestSignal: null });
 
   const session = store.get().session;
   finishing = false;

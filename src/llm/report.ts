@@ -63,7 +63,7 @@ const OUTCOME_TEXT: Record<QuestionJourney["outcome"], string> = {
   settled: "Pattern settled after follow-up.",
   persisting: "Pattern continued after follow-up.",
   limit_reached: "Follow-up limit reached; the pattern continued.",
-  unresolved: "The session ended before the pattern was re-observed.",
+  unresolved: "Re-observation did not finish before the Question ended.",
 };
 
 const MOMENT_TEXT: Record<FlagKind, string> = {

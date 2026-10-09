@@ -20,7 +20,7 @@ const OUTCOME: Record<QuestionJourney["outcome"], { text: string; tone: "settled
   settled: { text: "Settled ✓", tone: "settled" },
   persisting: { text: "Pattern continued", tone: "plain" },
   limit_reached: { text: "Follow-up limit reached", tone: "plain" },
-  unresolved: { text: "Session ended during re-observation", tone: "plain" },
+  unresolved: { text: "Re-observation did not finish", tone: "plain" },
 };
 
 const slug = (s: string) =>

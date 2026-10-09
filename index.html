@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The page may only talk to its own origin (assets, vendored models, the /ollama proxy). Blocks any third-party telemetry. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws://localhost:*" />
     <title>Gazewise</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
