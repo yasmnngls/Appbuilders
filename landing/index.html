@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!--
+      ======================================================================
+      SITE LINKS: edit these three constants before publishing.
+      The page works without JavaScript: the markup below falls back to
+      the same placeholders, and #demo shows "Demo video coming soon".
+      ======================================================================
+    -->
+    <script>
+      window.GAZEWISE_LINKS = {
+        // TODO: set to the public repository, e.g. "https://github.com/<owner>/<repo>"
+        GITHUB_URL: "https://github.com/",
+        // TODO: set to the ~1-minute demo video (YouTube or any video page). Empty = "coming soon".
+        DEMO_VIDEO_URL: "",
+        // TODO: set to the X or LinkedIn launch post. Empty = "coming soon".
+        SOCIAL_POST_URL: "",
+      };
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gazewise — Local AI Interview Assistant</title>
+    <meta
+      name="description"
+      content="A private, on-device interview assistant that helps Interviewers notice moments worth exploring, suggests neutral follow-up questions, re-observes, and helps them know when to move on."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f6f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121514" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!-- Open Graph / social preview (LP-008). TODO: make og:image absolute once the site URL is known. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Gazewise — Local AI Interview Assistant" />
+    <meta
+      property="og:description"
+      content="Notice. Follow up. Know when to move on. On-device vision and a local LLM help Interviewers explore moments without handing judgment to AI. #AppBuildersPH"
+    />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Gazewise: Notice. Follow up. Know when to move on. Local AI interview assistant." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Gazewise — Local AI Interview Assistant" />
+    <meta name="twitter:description" content="Notice. Follow up. Know when to move on. Vision and language models run on the Interviewer's laptop." />
+    <meta name="twitter:image" content="/og.png" />
+
+    <link rel="stylesheet" href="/src/style.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <a
+      href="#problem"
+      class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 btn"
+      >Skip to content</a
+    >
+
+    <!-- ============================== HERO ============================== -->
+    <header id="hero" class="wrap pt-6 pb-20 md:pb-28">
+      <nav class="flex items-center justify-between gap-4" aria-label="Primary">
+        <a href="#hero" class="flex items-center gap-2 font-semibold no-underline">
+          <img src="/favicon.svg" alt="" width="28" height="28" />
+          <span>Gazewise</span>
+        </a>
+        <ul class="hidden md:flex items-center gap-6 text-sm text-ink-2">
+          <li><a class="hover:text-ink" href="#how-it-works">How it works</a></li>
+          <li><a class="hover:text-ink" href="#why-local">Why local</a></li>
+          <li><a class="hover:text-ink" href="#architecture">Architecture</a></li>
+          <li><a class="hover:text-ink" href="#run">Run it</a></li>
+        </ul>
+        <a class="btn text-sm" data-link="github" href="https://github.com/" rel="noopener">GitHub</a>
+      </nav>
+
+      <div class="mt-16 md:mt-24 max-w-3xl">
+        <p class="eyebrow rise">Local AI Interview Assistant</p>
+        <h1 class="rise rise-2 mt-4 text-[2.5rem] leading-[1.05] sm:text-6xl md:text-7xl font-bold">
+          Notice. Follow&nbsp;up. Know when to move&nbsp;on.
+        </h1>
+        <p class="rise rise-3 mt-6 text-lg md:text-xl text-ink-2 max-w-2xl">
+          A private, on-device interview assistant that helps Interviewers notice moments worth exploring, suggests
+          neutral follow-up questions, re-observes what happens, and helps them know when to move on.
+        </p>
+        <div class="rise rise-3 mt-8 flex flex-wrap gap-3">
+          <a class="btn btn-primary" href="#demo">Watch demo</a>
+          <a class="btn" data-link="github" href="https://github.com/" rel="noopener">View on GitHub</a>
+          <a class="btn" href="#run">Run it locally</a>
+        </div>
+        <p class="mt-8 text-sm text-ink-3 flex flex-wrap gap-x-5 gap-y-1">
+          <span>For Interviewers</span>
+          <span class="hidden sm:inline" aria-hidden="true">·</span>
+          <span>Vision and language models run on-device</span>
+          <span class="hidden sm:inline" aria-hidden="true">·</span>
+          <span>No scores, no verdicts</span>
+        </p>
+      </div>
+    </header>
+
+    <main>
+      <!-- ============================== PROBLEM ============================== -->
+      <section id="problem" class="section" aria-labelledby="problem-title">
+        <div class="wrap grid gap-10 md:grid-cols-[1fr_1.2fr] md:gap-16">
+          <div>
+            <p class="eyebrow">The problem</p>
+            <h2 id="problem-title" class="h2">An Interviewer is doing six jobs at once.</h2>
+          </div>
+          <ul class="grid gap-6 text-ink-2">
+            <li class="border-l-2 border-line pl-5">
+              <strong class="text-ink">Too much to hold.</strong> Listening, understanding the answer, remembering
+              the Question, deciding what to ask next, keeping the conversation moving and taking notes.
+            </li>
+            <li class="border-l-2 border-line pl-5">
+              <strong class="text-ink">Useful moments slip by.</strong> A long look away or a reading-like pattern
+              can be worth a gentle follow-up, but it is easy to miss while you are listening.
+            </li>
+            <li class="border-l-2 border-line pl-5">
+              <strong class="text-ink">Monitoring tools over-judge.</strong> Proctoring software turns observations
+              into scores and labels. Interviewers need a prompt to ask a better question, not a verdict.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============================== HOW IT WORKS ============================== -->
+      <section id="how-it-works" class="section" aria-labelledby="how-title">
+        <div class="wrap">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-title" class="h2">A bounded follow-up loop that knows when to stop.</h2>
+          <p class="lede">
+            Gazewise learns each Candidate's own baseline first, then compares against it. Rules decide when a moment is
+            worth exploring; a local language model only writes the note and the suggested question. You stay in
+            control the whole time.
+          </p>
+
+          <div class="mt-12 grid gap-10 lg:grid-cols-[1.1fr_1fr] lg:gap-16 items-start">
+            <ol class="grid gap-4">
+              <li class="card p-5 flex gap-4">
+                <span class="chip shrink-0 h-7">1</span>
+                <div>
+                  <h3 class="font-semibold text-lg">Observe</h3>
+                  <p class="text-ink-2">On-device vision tracks gaze, head pose and faces in view, compared with the Candidate's own baseline.</p>
+                </div>
+              </li>
+              <li class="card p-5 flex gap-4">
+                <span class="chip shrink-0 h-7">2</span>
+                <div>
+                  <h3 class="font-semibold text-lg">Explore</h3>
+                  <p class="text-ink-2">When a pattern holds up, you see a Moment worth exploring with one neutral follow-up you can ask, or not.</p>
+                </div>
+              </li>
+              <li class="card p-5 flex gap-4">
+                <span class="chip shrink-0 h-7">3</span>
+                <div>
+                  <h3 class="font-semibold text-lg">Re-observe</h3>
+                  <p class="text-ink-2">After you ask, it quietly watches whether the pattern continues.</p>
+                </div>
+              </li>
+              <li class="card p-5 flex gap-4">
+                <span class="chip shrink-0 h-7">4</span>
+                <div>
+                  <h3 class="font-semibold text-lg">Resolve</h3>
+                  <p class="text-ink-2">The observation settles, or one final follow-up is offered. Never more than two per Question.</p>
+                </div>
+              </li>
+              <li class="card p-5 flex gap-4">
+                <span class="chip shrink-0 h-7">5</span>
+                <div>
+                  <h3 class="font-semibold text-lg">Move On</h3>
+                  <p class="text-ink-2">It stops suggesting and gets out of the way, so you can get to the next Question.</p>
+                </div>
+              </li>
+            </ol>
+
+            <!-- Static HTML/CSS illustration of the Follow-up card. Not interactive; no real person shown. -->
+            <figure class="lg:sticky lg:top-8">
+              <div class="card p-5 sm:p-6 shadow-[0_1px_0_var(--line),0_24px_48px_-24px_rgb(0_0_0/0.18)]" role="img"
+                aria-label="Illustration of the Follow-up card: Moment worth exploring, an Interviewer Note, a suggested follow-up, Follow-up 1 of 2, with Ask Follow-up and Continue buttons.">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="chip"><span aria-hidden="true">●</span> Moment worth exploring</span>
+                  <span class="text-sm font-medium text-ink-3">Follow-up 1 / 2</span>
+                </div>
+                <p class="mt-5 text-xs font-semibold uppercase tracking-wider text-ink-3">Interviewer Note</p>
+                <p class="mt-1 text-ink-2">
+                  Gaze moved off-screen several times during this answer, more often than in this Candidate's baseline.
+                </p>
+                <p class="mt-5 text-xs font-semibold uppercase tracking-wider text-ink-3">Suggested follow-up</p>
+                <p class="mt-1 text-lg font-medium leading-snug">
+                  “Could you walk me through how you would approach that, step by step?”
+                </p>
+                <div class="mt-6 flex flex-wrap gap-2">
+                  <span class="mock-btn mock-btn-primary">Ask Follow-up</span>
+                  <span class="mock-btn">Continue</span>
+                </div>
+              </div>
+              <figcaption class="mt-3 text-sm text-ink-3">
+                The Follow-up card. A Flag is an observation, never a verdict. You decide whether to ask.
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== WHAT IT IS NOT ============================== -->
+      <!-- The ONLY section where avoided words may appear, and only to say what the product does not do. -->
+      <section id="not" class="section" aria-labelledby="not-title">
+        <div class="wrap">
+          <p class="eyebrow">What it is not</p>
+          <h2 id="not-title" class="h2">An assistant, not surveillance.</h2>
+          <p class="lede">
+            Gazewise reports observable patterns and leaves every judgment to the Interviewer. It does not decide whether
+            a Candidate is cheating, lying, dishonest, suspicious or uncomfortable.
+          </p>
+          <ul class="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <li class="card p-5"><strong>No Candidate score.</strong> <span class="text-ink-2">No ratings, rankings or risk meters.</span></li>
+            <li class="card p-5"><strong>No cheating or honesty probability.</strong> <span class="text-ink-2">It never labels deception or a violation.</span></li>
+            <li class="card p-5"><strong>No emotion reading.</strong> <span class="text-ink-2">It does not infer discomfort, stress or mood.</span></li>
+            <li class="card p-5"><strong>No face recognition.</strong> <span class="text-ink-2">It counts faces in view; it never identifies anyone.</span></li>
+            <li class="card p-5"><strong>No hiring recommendation.</strong> <span class="text-ink-2">Hiring decisions stay with people.</span></li>
+            <li class="card p-5"><strong>No automatic questions.</strong> <span class="text-ink-2">It suggests; only the Interviewer asks.</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============================== WHY LOCAL ============================== -->
+      <section id="why-local" class="section" aria-labelledby="why-title">
+        <div class="wrap">
+          <p class="eyebrow">Why local AI</p>
+          <h2 id="why-title" class="h2">The AI runs on the Interviewer's laptop.</h2>
+          <div class="mt-10 grid gap-4 md:grid-cols-3">
+            <div class="card p-6">
+              <h3 class="font-semibold text-lg">Candidate video stays put</h3>
+              <p class="mt-2 text-ink-2">
+                Face and eye data is sensitive. Each frame is analysed in memory on the laptop and discarded. No upload,
+                no stored footage, no images in the report.
+              </p>
+            </div>
+            <div class="card p-6">
+              <h3 class="font-semibold text-lg">Real time, no upload</h3>
+              <p class="mt-2 text-ink-2">
+                Gaze analysis needs a steady stream of frames. On-device, there is no round trip to a server and no
+                per-call cost.
+              </p>
+            </div>
+            <div class="card p-6">
+              <h3 class="font-semibold text-lg">No cloud AI needed</h3>
+              <p class="mt-2 text-ink-2">
+                Vision runs in the browser and the language model runs through Ollama on localhost. The core AI loop
+                keeps working with no cloud AI service.
+              </p>
+            </div>
+          </div>
+          <div class="mt-8 grid gap-4 md:grid-cols-2">
+            <blockquote class="border-l-4 border-accent pl-5 py-1 text-lg font-medium">
+              The interview platform may use the internet. Our AI analysis layer does not need the cloud.
+            </blockquote>
+            <blockquote class="border-l-4 border-accent pl-5 py-1 text-lg font-medium">
+              A Flag is an observation, never a verdict.
+            </blockquote>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== DEMO ============================== -->
+      <section id="demo" class="section" aria-labelledby="demo-title">
+        <div class="wrap">
+          <p class="eyebrow">Demo</p>
+          <h2 id="demo-title" class="h2">See one moment, start to finish.</h2>
+          <p class="lede">About a minute: a moment is noticed, a follow-up is asked, the pattern is re-observed, and the Interviewer moves on.</p>
+          <div class="mt-10">
+            <!-- Shown until DEMO_VIDEO_URL is set (and always without JavaScript). -->
+            <div data-demo="placeholder" class="card aspect-video max-w-4xl grid place-items-center p-6 text-center bg-surface-2">
+              <div>
+                <p class="text-xl font-semibold">Demo video coming soon</p>
+                <p class="mt-2 text-ink-2">Meanwhile, see <a class="link" href="#how-it-works">how it works</a> or <a class="link" href="#run">run it locally</a>.</p>
+              </div>
+            </div>
+            <!-- Filled by src/main.ts when DEMO_VIDEO_URL is set. -->
+            <div data-demo="ready" class="max-w-4xl" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== ARCHITECTURE ============================== -->
+      <section id="architecture" class="section" aria-labelledby="arch-title">
+        <div class="wrap grid gap-10 lg:grid-cols-[1fr_1.1fr] lg:gap-16 items-start">
+          <div>
+            <p class="eyebrow">Architecture at a glance</p>
+            <h2 id="arch-title" class="h2">Rules detect. The language model only writes.</h2>
+            <ul class="mt-6 grid gap-3 text-ink-2">
+              <li><strong class="text-ink">Video</strong> comes from the meeting window or a local webcam.</li>
+              <li><strong class="text-ink">Local vision</strong> (MediaPipe Face Landmarker, in the browser) turns frames into signals: face count, head pose, gaze.</li>
+              <li><strong class="text-ink">Baseline, rules and an evidence gate</strong> decide when a pattern is worth exploring. Plain, unit-tested TypeScript.</li>
+              <li><strong class="text-ink">The local LLM</strong> (Ollama on localhost) writes a neutral note and follow-up. It never sees video, only structured context.</li>
+              <li><strong class="text-ink">The Interviewer</strong> decides: ask, continue or move on.</li>
+            </ul>
+          </div>
+          <figure class="card p-4 sm:p-6">
+            <img
+              src="/architecture.svg"
+              width="480"
+              height="760"
+              class="mx-auto w-full max-w-[480px] h-auto"
+              alt="Diagram. The existing interview platform, which may use the internet, provides video by window capture or webcam. Everything else runs on the Interviewer's laptop: Video, then Local vision with MediaPipe Face Landmarker, then Signals, then Baseline plus rules plus evidence gate, then the local LLM through Ollama, then the Interviewer, who decides."
+            />
+          </figure>
+        </div>
+      </section>
+
+      <!-- ============================== RUN ============================== -->
+      <section id="run" class="section" aria-labelledby="run-title">
+        <div class="wrap grid gap-10 lg:grid-cols-[1fr_1.3fr] lg:gap-16">
+          <div>
+            <p class="eyebrow">Run it locally</p>
+            <h2 id="run-title" class="h2">Four commands on your own laptop.</h2>
+            <h3 class="mt-8 font-semibold">Requirements</h3>
+            <ul class="mt-3 grid gap-2 text-ink-2 list-disc pl-5">
+              <li>Node.js 20 or newer</li>
+              <li>Chrome or Edge (Chromium-based browser)</li>
+              <li><a class="link" href="https://ollama.com" rel="noopener">Ollama</a>, installed locally</li>
+            </ul>
+            <p class="mt-6 text-ink-2">
+              Full steps, including picking the Candidate tile in a meeting window, are in the
+              <a class="link" data-link="readme" href="https://github.com/" rel="noopener">README</a>.
+            </p>
+          </div>
+          <div class="min-w-0">
+            <pre class="cmd"><code><span class="text-ink-3"># 1. Get the local language model</span>
+ollama pull qwen2.5:3b
+<span class="text-ink-3"># 2. Get the code</span>
+git clone <span data-text="clone">&lt;repository-url&gt;</span> gazewise &amp;&amp; cd gazewise
+<span class="text-ink-3"># 3. Install</span>
+npm install
+<span class="text-ink-3"># 4. Start, then open http://localhost:5173</span>
+npm run dev</code></pre>
+            <p class="mt-3 text-sm text-ink-3">
+              The face model and its runtime ship with the repository, so the app loads without a network connection.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== DISCLOSURES ============================== -->
+      <section id="disclosures" class="section" aria-labelledby="disc-title">
+        <div class="wrap">
+          <p class="eyebrow">Disclosures</p>
+          <h2 id="disc-title" class="h2">What it is built with.</h2>
+          <dl class="mt-10 grid gap-x-12 gap-y-8 md:grid-cols-2">
+            <div>
+              <dt class="font-semibold">Models</dt>
+              <dd class="mt-1 text-ink-2">MediaPipe Face Landmarker (<code>face_landmarker.task</code>, float16, Google), run in the browser. Qwen2.5 3B Instruct (<code>qwen2.5:3b</code>) via Ollama.</dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Frameworks and libraries</dt>
+              <dd class="mt-1 text-ink-2"><code>@mediapipe/tasks-vision</code>, React, Vite, TypeScript, Tailwind CSS, Vitest.</dd>
+            </div>
+            <div>
+              <dt class="font-semibold">APIs and cloud services</dt>
+              <dd class="mt-1 text-ink-2">None at runtime for the core AI loop. The Ollama HTTP API is on localhost. The interview platform itself (if used) is the only part that needs the internet.</dd>
+            </div>
+            <div>
+              <dt class="font-semibold">AI development tools</dt>
+              <dd class="mt-1 text-ink-2">Claude Code.</dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Tested hardware</dt>
+              <dd class="mt-1 text-ink-2">Intel Core i5-13420H · NVIDIA GeForce RTX 3050 Laptop GPU (4 GB) · 7.7 GB system RAM · <code>qwen2.5:3b</code> on Ollama.</dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Existing code and assets</dt>
+              <dd class="mt-1 text-ink-2">None; built during the AppBuildersPH Hackathon 2026. Third-party packages are unmodified.</dd>
+            </div>
+          </dl>
+          <p class="mt-10 text-sm text-ink-3 max-w-2xl">
+            This page is static. It loads no analytics, sets no cookies and never runs the vision model or talks to a
+            language model.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============================== FOOTER ============================== -->
+    <footer id="footer" class="border-t border-line">
+      <div class="wrap py-10 flex flex-col gap-6 md:flex-row md:items-center md:justify-between text-sm text-ink-2">
+        <div class="flex items-center gap-2">
+          <img src="/favicon.svg" alt="" width="22" height="22" />
+          <span><strong class="text-ink">Gazewise</strong> · Local AI Interview Assistant</span>
+        </div>
+        <ul class="flex flex-wrap gap-x-5 gap-y-2">
+          <li><a class="hover:text-ink underline-offset-4 hover:underline" data-link="github" href="https://github.com/" rel="noopener">GitHub</a></li>
+          <li><a class="hover:text-ink underline-offset-4 hover:underline" data-link="demo" href="#demo">Demo video</a></li>
+          <li>
+            <a class="hover:text-ink underline-offset-4 hover:underline" data-link="social" href="#footer" hidden rel="noopener">X / LinkedIn post</a>
+            <span data-social="placeholder">X / LinkedIn post (coming soon)</span>
+          </li>
+          <li>#AppBuildersPH</li>
+          <li><a class="hover:text-ink underline-offset-4 hover:underline" data-link="license" href="https://github.com/" rel="noopener">MIT License</a></li>
+        </ul>
+      </div>
+    </footer>
+  </body>
+</html>

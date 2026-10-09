@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#f7f6f2"/>
+  <rect x="0" y="0" width="1200" height="10" fill="#2f6b5a"/>
+  <g transform="translate(80 92)">
+    <rect width="64" height="64" rx="16" fill="#2f6b5a"/>
+    <path d="M10 32c6-10.4 13.6-15.6 22-15.6S48 21.6 54 32c-6 10.4-13.6 15.6-22 15.6S16 42.4 10 32Z" fill="none" stroke="#f7f6f2" stroke-width="4.4" stroke-linejoin="round"/>
+    <circle cx="32" cy="32" r="7.2" fill="#f7f6f2"/>
+    <text x="88" y="45" font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="38" font-weight="700" fill="#1d2320">Gazewise</text>
+  </g>
+  <text font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="78" font-weight="700" fill="#1d2320" letter-spacing="-1.5">
+    <tspan x="80" y="290">Notice. Follow up.</tspan>
+    <tspan x="80" y="380">Know when to move on.</tspan>
+  </text>
+  <text x="80" y="466" font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="30" fill="#4a524e">Local AI interview assistant · vision and language models run on-device</text>
+  <rect x="80" y="516" width="232" height="48" rx="24" fill="#e2eee8"/>
+  <text x="196" y="548" text-anchor="middle" font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#2f6b5a">#AppBuildersPH</text>
+  <text x="332" y="548" font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="22" fill="#6b736f">Observations, never verdicts.</text>
+</svg>

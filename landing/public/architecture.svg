@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 760" width="480" height="760" role="img" aria-labelledby="t d">
+  <title id="t">Gazewise architecture at a glance</title>
+  <desc id="d">The interview platform provides video. On the Interviewer's laptop: Video, Local vision, Signals, Baseline plus rules plus evidence gate, Local LLM, Interviewer.</desc>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: #1d2320; }
+    .t { font-size: 18px; font-weight: 650; }
+    .s { font-size: 14px; fill: #4a524e; }
+    .z { font-size: 13px; font-weight: 700; letter-spacing: .08em; fill: #2f6b5a; }
+    .n { font-size: 13px; fill: #6b736f; }
+    .box { fill: #ffffff; stroke: #cfcbc0; stroke-width: 1.5; }
+    .key { fill: #e2eee8; stroke: #2f6b5a; stroke-width: 1.5; }
+    .ext { fill: none; stroke: #b9b5aa; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .zone { fill: #eef3f0; stroke: #2f6b5a; stroke-width: 1.5; }
+    .arr { stroke: #2f6b5a; stroke-width: 2; fill: none; }
+    .head { fill: #2f6b5a; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #eceeeb; }
+      .s { fill: #b9c0bc; }
+      .z { fill: #8cc7b2; }
+      .n { fill: #959d99; }
+      .box { fill: #1a1f1d; stroke: #3a423f; }
+      .key { fill: #1f3029; stroke: #8cc7b2; }
+      .ext { stroke: #4a524e; }
+      .zone { fill: #16201c; stroke: #8cc7b2; }
+      .arr { stroke: #8cc7b2; }
+      .head { fill: #8cc7b2; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head" d="M0 0 10 5 0 10z"/>
+    </marker>
+  </defs>
+
+  <!-- Outside the laptop: the interview platform (transport only) -->
+  <rect class="ext" x="20" y="10" width="440" height="70" rx="14"/>
+  <text class="t" x="40" y="40">Interview platform</text>
+  <text class="s" x="40" y="62">Meet / Zoom / Teams · may use the internet</text>
+
+  <line class="arr" x1="240" y1="80" x2="240" y2="120" marker-end="url(#a)"/>
+  <text class="n" x="252" y="106">window capture or webcam</text>
+
+  <!-- The laptop: everything on-device -->
+  <rect class="zone" x="10" y="126" width="460" height="624" rx="20"/>
+  <text class="z" x="34" y="156">INTERVIEWER'S LAPTOP · ON-DEVICE</text>
+
+  <rect class="box" x="40" y="172" width="400" height="64" rx="12"/>
+  <text class="t" x="60" y="200">Video</text>
+  <text class="s" x="60" y="222">Candidate tile or local webcam, in memory only</text>
+  <line class="arr" x1="240" y1="236" x2="240" y2="262" marker-end="url(#a)"/>
+
+  <rect class="box" x="40" y="266" width="400" height="64" rx="12"/>
+  <text class="t" x="60" y="294">Local vision</text>
+  <text class="s" x="60" y="316">MediaPipe Face Landmarker in the browser</text>
+  <line class="arr" x1="240" y1="330" x2="240" y2="356" marker-end="url(#a)"/>
+
+  <rect class="box" x="40" y="360" width="400" height="64" rx="12"/>
+  <text class="t" x="60" y="388">Signals</text>
+  <text class="s" x="60" y="410">Face count · head pose · gaze</text>
+  <line class="arr" x1="240" y1="424" x2="240" y2="450" marker-end="url(#a)"/>
+
+  <rect class="key" x="40" y="454" width="400" height="64" rx="12"/>
+  <text class="t" x="60" y="482">Baseline + Rules + Evidence gate</text>
+  <text class="s" x="60" y="504">Decides when a moment is worth exploring</text>
+  <line class="arr" x1="240" y1="518" x2="240" y2="544" marker-end="url(#a)"/>
+
+  <rect class="box" x="40" y="548" width="400" height="64" rx="12"/>
+  <text class="t" x="60" y="576">Local LLM</text>
+  <text class="s" x="60" y="598">Ollama on localhost · writes note + follow-up</text>
+  <line class="arr" x1="240" y1="612" x2="240" y2="638" marker-end="url(#a)"/>
+
+  <rect class="key" x="40" y="642" width="400" height="64" rx="12"/>
+  <text class="t" x="60" y="670">Interviewer</text>
+  <text class="s" x="60" y="692">Decides: ask, continue or move on</text>
+
+  <text class="n" x="40" y="732">No video reaches the LLM. No cloud AI in the loop.</text>
+</svg>

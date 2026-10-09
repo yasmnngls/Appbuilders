@@ -9,7 +9,9 @@
     "typecheck": "tsc",
     "preview": "vite preview",
     "test": "vitest run",
-    "assets": "node scripts/fetch-assets.mjs"
+    "assets": "node scripts/fetch-assets.mjs",
+    "landing:dev": "npm --prefix landing run dev",
+    "landing:build": "npm --prefix landing run build"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.1.0",
