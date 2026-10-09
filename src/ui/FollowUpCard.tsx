@@ -1,4 +1,5 @@
 import { followUpAction, newQuestion } from "../app/controller";
+import { analyzeAnswer } from "../context/gaps";
 import { MAX_FOLLOW_UPS, type Moment } from "../domain/types";
 import { RULES } from "../rules/config";
 import { allowedActions, type FollowUpAction } from "../rules/followUp";
@@ -27,7 +28,11 @@ export function FollowUpCard() {
 
   const current = followUp.momentId ? moments.find((m) => m.id === followUp.momentId) : undefined;
   const asked = [...moments].reverse().find((m) => m.questionId === followUp.questionId && m.decision === "asked");
-  const actions = allowedActions(followUp);
+  // No follow-up text (still writing, or none suggested): nothing to ask; with none suggested, Continue only.
+  const noText = !!current && current.followUp === null;
+  const actions = allowedActions(followUp).filter(
+    (a) => !(noText && a === "ask") && !(noText && current?.suggestion !== "generating" && a === "dismiss"),
+  );
   const final = used + 1 >= MAX_FOLLOW_UPS;
 
   const run = (a: FollowUpAction) => (a === "next_question" ? newQuestion() : followUpAction(a));
@@ -109,13 +114,17 @@ function Suggestion({ moment, model }: { moment: Moment; model: string | null })
       ) : (
         <>
           {moment.note && <p className="leading-relaxed text-zinc-200">{moment.note}</p>}
-          {moment.followUp && (
+          {moment.followUp ? (
             <p className="card-enter rounded-lg bg-zinc-950/60 px-3 py-2 leading-relaxed text-zinc-100">
               <span className="block text-xs text-zinc-500">Suggested follow-up</span>“{moment.followUp}”
             </p>
+          ) : (
+            moment.reasoning && <p className="text-zinc-300">{noFollowUpLine(moment.reasoning.reason)}</p>
           )}
+          {moment.followUp && moment.reasoning && <WhyLine moment={moment} />}
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            {moment.quality &&
+            {moment.followUp &&
+              moment.quality &&
               (["specific", "neutral", "grounded"] as const).map((k) => (
                 <span
                   key={k}
@@ -132,6 +141,32 @@ function Suggestion({ moment, model }: { moment: Moment; model: string | null })
         </>
       )}
     </>
+  );
+}
+
+/** "No follow-up suggested — <reason>", without repeating the phrase when the reason already ends with it. */
+function noFollowUpLine(reason: string): string {
+  const core = reason.replace(/\s*—\s*no follow-up suggested\.?$/i, "").replace(/\.$/, "");
+  return /^no transcript/i.test(core) ? reason : `No follow-up suggested — ${core.charAt(0).toLowerCase()}${core.slice(1)}.`;
+}
+
+const short = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n - 1).trimEnd()}…`);
+
+/** Compact traceability line: what was asked, what the answer covered, and what remained unclear. */
+function WhyLine({ moment }: { moment: Moment }) {
+  const r = moment.reasoning!;
+  const covered = analyzeAnswer(r.answer).covered;
+  return (
+    <p className="text-xs leading-relaxed text-zinc-500">
+      <span className="text-zinc-400">Why this follow-up: </span>
+      Q: {short(r.question, 80)} · Answer covered: {covered.length ? covered.join(", ") : "—"}
+      {r.gap && (
+        <>
+          {" "}
+          · Unclear: <span className="text-zinc-300">{r.gap}</span> — {r.reason}
+        </>
+      )}
+    </p>
   );
 }
 
