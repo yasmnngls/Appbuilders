@@ -175,14 +175,14 @@ export interface GateHit {
 export function evaluateGate(input: GateInput): GateHit | null;
 ```
 
-**Eligible Flags.** A Flag counts only if all of these hold:
-- `questionId === question.id`;
-- `!dismissed`;
-- `start >= followUp.watchFrom`;
-- `start >= question.start + graceMs`.
+**Eligible Flags** (revised by the audit, §18.4). The gate's *floor* is the later of `question.start + graceMs` and `followUp.watchFrom`. A Flag counts if it is not `dismissed` and either:
+- it belongs to this Question and starts at or after the floor; or
+- it is **still running at the floor** (started earlier, even in the previous Question or before an Ask). It then counts only for the time after the floor. Exception: after **Continue**, Flags already running are excluded, because the Interviewer has already seen them.
+
+A carried-over Flag never counts as a new glance toward the repeat trigger. A carried-over reading Flag must keep going for `reading.windowMs` past the floor. Ownership never changes: a Flag still belongs to the Question active when it started (FR-007).
 
 **Never open (returns null):**
-- the Baseline isn't ready;
+- gaze triggers (off-screen, reading) while the Baseline isn't ready. Face triggers (face missing, second face) work without a Baseline;
 - `now < question.start + graceMs` (10 s thinking time);
 - the phase is anything other than `observing` or `re_observing`. In other phases the gate isn't asked at all, but guard here too.
 
@@ -1160,5 +1160,268 @@ Each has a recommendation. Decide before the module starts.
 | D2 | Flag Details → Dismiss removes the Flag from the gate only, or also hides it from Recent | Gate only; row greyed, still listed (nothing silently disappears) | M8.7 |
 | D3 | Flag Details → Explore can open a Moment without the gate | Yes, when observing and budget remains (Interviewer in control, FR-014) | M2.3 |
 | D4 | PDF via print or `jspdf` | Print (no dependency, offline) | M10 |
-| D5 | Should an off-screen Flag that started before `watchFrom` but is still ongoing count during re-observation? | No (as in ARCHITECTURE §3.2); revisit only if the demo shows a miss | M2.2 |
+| D5 | Should a Flag that started before `watchFrom` but is still ongoing count during re-observation? | **Resolved by the audit: yes**, for the time after the Ask; otherwise a pattern that never stops reads as "settled" (FR-016) | M2.2 |
 | D6 | Report LLM writes new follow-ups or lists only asked ones | Only asked ones (grounded) | M9.1 |
+
+---
+
+# Full Audit Results
+
+| | |
+|---|---|
+| Date/time | 2026-10-10, 03:00–03:56 (UTC+8) |
+| Commit tested | `20459db` (start) → fixes through `0efde50` (end) |
+| Test suite at end | `npx tsc --noEmit` clean · `npx vitest run`: 14 files, **332 passed**, 1 skipped (live-LLM suite, opt-in with `OLLAMA_LIVE=1`) |
+| Environment | Windows 11 (26200), Node 24.18, Vite 8, Edge 154 headless (puppeteer-core, fake camera/mic), Ollama 0.40.1 |
+| Hardware | ASUS Vivobook K3605VC: i5-13420H, **RTX 3050 Laptop 4 GB**, **7.7 GB RAM**. This is *not* the PRD §14A.4 reference machine (RTX 4060 / 8 GB); every number below is from this laptop |
+| Method | Four parallel audits (rules, flow/security/storage, local LLM, audio/sources/offline/benchmark). Each claim was proven by a test, a browser run, or a code trace. Anything not proven is marked NOT VERIFIED or PENDING MANUAL RUN |
+
+**The biggest limit of this audit: no real face was used.** The headless fake camera shows no face, so the full camera → MediaPipe → Signals → Baseline path was driven with synthetic Signals (unit/scenario tests) or synthetic Flags (browser). The vision model itself ran in the browser (fps and latency measured), but whether real gaze produces the right Signals on this laptop is **PENDING MANUAL RUN**.
+
+## Hackathon criteria
+
+| Criterion | Already satisfied | Weak points / what a judge could question | Fix | Status |
+|---|---|---|---|---|
+| Problem & Usefulness (25%) | One user (Interviewer), a clear problem (PRD §3), an assistant that suggests and then stops (2-follow-up limit, settled/limit states), never scores | Usefulness depends on real gaze accuracy, which is not yet verified with a real face. Window mode (the realistic online-interview case) has no audio, so it uses the stricter visual-only rules | Real-face rehearsal (§14 run) before recording the demo | PARTIAL |
+| Local AI Implementation (25%) | Vision runs in the browser (MediaPipe Face Landmarker, WASM + GPU delegate, vendored model, no CDN). The LLM is local (Ollama, qwen2.5:3b Q4_K_M). Speech activity is local. **0 requests outside localhost** in a simulated offline run, after blocking MediaPipe's built-in telemetry. The LLM is fundamental: it writes every Note and follow-up | PRD §14A.1 targets ONNX Runtime + WebGPU and Qwen3 4B/1.7B; we use MediaPipe's runtime (WebGL GPU delegate) and qwen2.5:3b, the only installed model. Real Wi-Fi-off run not done | Disclose the actual stack (README does). Optionally `ollama pull qwen3:4b` and `ollama pull qwen3:1.7b` and re-benchmark. Do the real Wi-Fi-off run | PARTIAL (simulated offline PASS) |
+| Technical Execution (20%) | Pure, tested rules engine (Baseline, 4 Flags, evidence gate, state machine with invariants and a property test). 332 tests. Guard with retry and fallback. Consent enforced in code. Consistency checker over a 20-Question session. 5-minute stability run with no heap growth | No real-face end-to-end run. LLM latency 5–12 s on a shared GPU (one call hit the 20 s budget and fell back) | Manual run. Warm the model before the demo (the app does it on load) | PARTIAL |
+| Innovation (15%) | The bounded loop Observe → Explore → Re-observe → Resolve → Move On; precision first; a dead-air filter driven by speech activity; Flags explained against a personal Baseline | Could be read as "eye tracking with an LLM" if the demo doesn't show the *stop* behaviour | Demo must show both settled and limit reached (§14 steps 10–11) | PASS (design) |
+| Product & Demo Quality (15%) | Calm, non-surveillance UI; all screens verified in the browser; landing site built | Demo video not recorded. Landing links are placeholders and the site isn't deployed. Real-face demo not rehearsed | See the pre-submission checklist | NOT VERIFIED |
+
+**Local AI statements we can defend:**
+- Meaningful inference is local: per-frame vision, and the LLM writing Notes and follow-ups.
+- The core loop works with no cloud AI.
+- **Online interview:** the meeting platform needs internet; our AI layer doesn't.
+- **Offline Test:** use Local Webcam or Local Video, then disable internet.
+
+## Requirements Coverage
+
+Status key:
+- **PASS** = functionally verified.
+- **PARTIAL** = verified with synthetic input only, or partly.
+- **NOT VERIFIED** = built but not exercised.
+- **MISSING** = not built.
+
+| Requirement | PRD | Implemented | Tested | Evidence | Status |
+|---|---|---|---|---|---|
+| Consent gate | FR-001 | Yes; enforced in UI, controller and store | Browser + unit | Bypass via module API closed (`controller.test.ts`, `consistency.test.ts`) | PASS |
+| Consent from platform | FR-001 opt. 1 | No | — | No connector or postMessage hook | MISSING (documented limitation) |
+| Source: webcam | FR-002 | Yes | Browser (fake cam) | Preview, permission-denied and no-camera messages | PASS |
+| Source: meeting window + crop | FR-002 | Yes | Headless "entire screen" only | Single real meeting window not tested | NOT VERIFIED |
+| Source: Local Video | FR-002 (P1) | Yes | Browser | Generated webm: plays, Signals 21–25 fps, `ended` → finish, bad file → message | PASS |
+| Local vision Signals | FR-003 | Yes | Unit + browser fps | Real-face accuracy untested | PARTIAL |
+| Automatic Baseline | FR-004 | Yes | Unit + browser (synthetic) | 15 s median/MAD; real face PENDING | PARTIAL |
+| Temporal processing / gate | FR-005 | Yes | 27 audit tests on the real engine | PRD cases 1–9 pass; 4 false negatives fixed | PASS (synthetic) |
+| Speech activity | FR-005A | Yes (energy VAD) | Unit + browser (tone) | Transitions verified; real voice PENDING | PARTIAL |
+| 4 Flag types | FR-006 | Yes | Unit | `engine.test.ts`, `audit.test.ts` | PASS (synthetic) |
+| Question tracking | FR-007 | Yes | Unit + browser | Ownership at Flag start; label capped at 200 chars | PASS |
+| Live dashboard | FR-008 | Yes | Browser | Screenshots; no red, no scores | PASS |
+| Explainable Flag | FR-009 | Yes | Unit + browser | `explain.test.ts`; Esc closes | PASS |
+| Moment worth exploring | FR-010 | Yes | Unit + browser | Gate → card | PASS |
+| Local Interviewer Note | FR-011 | Yes | Live LLM ×22 | Event-driven; 20 s budget; fallback | PASS |
+| Neutral follow-up | FR-012 | Yes | Live + guard tests | 22 live runs; injections rejected | PASS |
+| Quality check | FR-013 (P1) | Yes (local, authoritative) | Unit + live | Chips shown | PASS |
+| Interviewer override | FR-014 | Yes | Unit + browser | Ask/Continue/Dismiss/Explore | PASS |
+| Follow-up counter / limit | FR-015 | Yes, in the reducer | Unit + browser (API ×5) | `used` never above 2 | PASS |
+| Re-observation | FR-016 | Yes | Unit + browser | 30 s; the "pattern never stopped" loophole is fixed | PASS |
+| Stop condition | FR-017 | Yes | Unit + browser | settled / limit_reached | PASS |
+| Session Timeline | FR-018 | Yes | Consistency test | One event per transition | PASS |
+| Question Journey | FR-019 (P1) | Yes | Unit | `buildJourneys` | PASS |
+| Session Report | FR-020 | Yes | Browser + unit | LLM about 13–16 s; fallback; grounding check | PASS |
+| PDF export | FR-021 | Yes (print) | Browser (print stubbed) | Real "Save as PDF" output PENDING | PARTIAL |
+| Markdown / JSON export | — | Yes | Unit (content) | Files on disk not checked headless | PARTIAL |
+| Model selection / step-down | §14A.5 | Yes | Unit | Qwen3 not installed, so not exercised on hardware | PARTIAL |
+| Benchmark | §14A.6 | Partly | Browser + bench script | BENCHMARK.md; real-face, RTX-GPU vision and Wi-Fi-off rows PENDING | PARTIAL |
+| Offline core loop | §20 | Yes | Simulated (dead proxy) | 0 external requests; LLM and report work | PARTIAL (real Wi-Fi-off PENDING) |
+| Observation-only language | §18.1 | Yes | `language.test.ts`, guard tests | Scans all source plus fallbacks | PASS |
+| Landing site | PRD-landing | Yes | Headless 360/768/1440 | Links placeholder; not deployed | PARTIAL |
+
+## Bugs Found
+
+| # | Symptom | Root cause | Fix | Regression test |
+|---|---|---|---|---|
+| B1 | MediaPipe POSTed usage stats to `odml.pa.googleapis.com` every 60 s (no frames or landmarks, but it contradicts "no cloud") | Built-in logger in `@mediapipe/tasks-vision` 1.1.0 | `faceTracker.ts` refuses fetch to that host. A CSP `connect-src 'self'` in `index.html` blocks any future third-party call | `faceTracker.test.ts`; browser: 0 external requests |
+| B2 | Camera could open and a Session start without Consent (module API) | No check for the Consent draft in `openSource` / `startSession` | Throws or returns `false` without a draft | `controller.test.ts`, `consistency.test.ts` |
+| B3 | "Observation settled" while the Candidate looked away through the whole re-observation | The gate ignored Flags that started before the Ask | Running Flags count after the floor | `audit.test.ts` "gaze kept away…", `gate.test.ts` 7b |
+| B4 | Reading or face pattern that started in the 10 s grace window never opened a Moment | Same: start-time-only eligibility | Same fix | `audit.test.ts` grace cases, `gate.test.ts` 2 |
+| B5 | A Flag running across a Question boundary was invisible in the new Question | `questionId` filter | Counts from the new Question's grace end; ownership unchanged | `gate.test.ts` 7c |
+| B6 | Face missing or second face could not open a Moment before or while relearning the Baseline | Gate required the Baseline for every trigger | Only gaze triggers require it | `gate.test.ts` 1b |
+| B7 | `exploreFlag` with an unknown, dismissed or earlier-Question Flag opened a phantom Moment | No validation | Validate Flag, status and Question | `controller.test.ts` |
+| B8 | New session left the old report's LLM request running | No abort | `newSession()` aborts and closes the Source | Browser |
+| B9 | A Moment could show "generating…" for up to about 100 s | Timeout started after the queue wait; retry added more | 20 s total budget, also while queued | `llm.test.ts` budget test |
+| B10 | The report could invent an unobserved Flag kind ("face out of view") | The guard checked words only | A field naming an unobserved kind falls back | `llm.test.ts` kind-grounding |
+| B11 | Notes copied "(the project question)" onto unrelated Questions | The model copied the prompt example | `stripUngroundedTopic` | `llm.test.ts` |
+| B12 | Report said "session ended" for a Question left mid re-observation | Single outcome text | "Re-observation did not finish before the Question ended." | Report tests |
+| B13 | Smoke-test bugs: Source stopping before preview hung Screen 2; "Baseline ready" pill stuck; export names in UTC; fps shown after session end | — | Fixed (`cd035d6`, `6e82237`, `0efde50`) | Browser |
+
+## Loopholes Found
+
+| Exploit / path | Impact | Fix | Verification |
+|---|---|---|---|
+| Call `openSource` / `startBaseline` without Consent | Observation without Consent (FR-001) | B2 | Browser: no stream, no Session |
+| Keep looking away from before the Ask until re-observation ends | System reports "settled"; the loop is defeated | B3 | Audit tests |
+| Start reading as the Question is asked | No Moment for that Question | B4 | Audit tests |
+| `followUpAction("ask")` ×5 via the API | Exceed 2 follow-ups | Already blocked by the reducer | Browser + property test (1,000 runs) |
+| Prompt injection through the Question label (instructions to accuse, fake JSON, chat-template tokens) | Accusatory text shown | Label flattened, JSON-quoted, clipped to 200 chars; phrase-level guard; retry → fallback | 22 live runs: nothing banned shown |
+| 10,000-character label or name | Bloated prompt/report | Caps: label 200, name 100 (store, input, prompt) | `consistency.test.ts` |
+| Giant or malformed model output | Huge or broken UI and export | Length caps; parse failures → fallback | 13 failure modes × 2 paths |
+| Fake or duplicate Flags via `applyTransitions` | Forged observations | **Accepted:** client-side tool whose only user is the Interviewer. Nothing is shared or persisted, so the only forger is the reader | Documented |
+
+## Security Findings
+
+| Finding | Severity | Mitigation | Status |
+|---|---|---|---|
+| Third-party telemetry from MediaPipe | Medium (privacy claim) | Host blocked; CSP `connect-src 'self'` | Fixed |
+| XSS via name, label or LLM text | None found | React text rendering only; no `innerHTML` / `dangerouslySetInnerHTML` | Verified |
+| Markdown export keeps raw HTML-like text | Low | Only matters if someone renders the file as HTML elsewhere | Accepted |
+| Dev or preview server exposed on the LAN | None | Vite binds localhost only (no `server.host`) | Verified |
+| Ollama exposed | None | Bound to 127.0.0.1:11434; reached only via the localhost proxy | Verified |
+| Arbitrary file access | None | Local Video reads only the user-picked file via a revoked blob URL | Verified |
+| Export filename injection | None | Slug `[a-z0-9-]` | Verified |
+| Auth / SQL / command / path traversal | N/A | No backend, database or shell | — |
+
+## Database / Storage Findings
+
+- **Architecture:** there is **no database.** One in-memory store (`src/store/session.ts`) lives in the browser tab's JS heap.
+- **Schema:** the TypeScript types in `src/domain/types.ts` (ARCHITECTURE §4).
+  - Session holds consent, source, baseline, questions[], flags[], moments[], followUp, timeline[] and report.
+  - Relationships are by id: `Flag.questionId`, `Moment.questionId`, `Moment.flagIds`, `TimelineEvent.questionId`.
+  - There are no database constraints. Integrity is enforced in code and checked by `checkConsistency()` (`src/store/consistency.test.ts`):
+    - all references resolve;
+    - each Flag sits on the Question active at its start;
+    - at most 2 follow-ups per Question;
+    - timeline counts match;
+    - report journeys and Markdown match the Session;
+    - JSON round-trips.
+- **Persistence:** none. No localStorage, sessionStorage, IndexedDB or cookies (verified in the browser and by grep).
+- **Lifecycle:** Consent draft → Session → New session or reload wipes everything. Reload mid-session loses the Session with no warning (accepted; no `beforeunload` added).
+- **Data flow:**
+
+| Data | Stays local? | Leaves the device? | Stored? |
+|---|---|---|---|
+| Video, audio, landmarks | Yes, processed in memory per frame | Never | Never |
+| Signals, Flags, Moments, timeline | Yes | Text only, to Ollama on 127.0.0.1 (same machine) | In memory until New session or reload |
+| Candidate name | Yes | Not sent to the LLM (test-enforced) | In memory; in exports |
+| Exports (.md, .json, PDF) | Written only where the Interviewer saves them | Only if the Interviewer shares the file | On disk, by explicit user action |
+
+## Question & Follow-up Findings
+
+- **Question Bank:** there is **none.** Questions are created live by the Interviewer:
+  - with the N key or the "+ New Question" button;
+  - with an optional label, capped at 200 characters;
+  - Q1 "Introduction" is created at Session start.
+
+  A preset question bank is P2 in the PRD (§25).
+- **Active Question:** the last one in `session.questions`. Flags belong to the Question active when they **start** (FR-007). A Flag that continues into the next Question keeps its owner, and is now also counted by the gate in the new Question after its grace window (B5).
+- **Follow-ups:**
+  - Generated only when the gate or Explore opens a Moment.
+  - The reducer enforces `MAX_FOLLOW_UPS = 2`.
+  - 0, 1 and 2 follow-ups and an attempted 3rd were all verified; the 3rd is ignored.
+  - Continue, Dismiss and Explore follow the transition table.
+  - Double Ask spends one follow-up.
+  - New Question resets the loop.
+- **Stop condition:** settled (30 s with no trigger) or limit reached (a trigger after 2 follow-ups). Dismissed stops suggestions for the Question.
+- **Open UX gap:** a new Question during re-observation leaves the earlier Moment with no result. The report now says "Re-observation did not finish before the Question ended."
+
+## Audio / Speech Findings
+
+| Question | Answer |
+|---|---|
+| Interviewer audio | Picked up by the webcam mic in the same room. **Not separated from the Candidate** |
+| Candidate audio | Webcam mic (in-person). Meeting window: usually **none** (Chrome shares audio for tabs or the entire screen, rarely for a single window). Local Video: from the file |
+| VAD | **Yes, energy-based** (RMS every 50 ms, adaptive noise floor, 150 ms onset / 400 ms release). Verified with a synthetic tone |
+| Whisper / whisper.cpp / ASR | **Not implemented** (grep-verified). No transcription anywhere |
+| Local / cloud | Fully local. Audio is never recorded, played, uploaded or sent to the LLM |
+| Used by the gate? | **Yes.** Off-screen glances inside a pause of 4 s or less that ends with speech resuming are ignored (dead air / thinking). With no audio, stricter rules apply: 8 s sustained instead of 6 s, 4 glances instead of 3 |
+| Current status | Works for "speaking → short pause → looks away → continues". Weaknesses: an in-room Interviewer's voice counts as speech; window mode has no audio; noisy rooms |
+| Recommendation | **Keep energy VAD for the MVP.** Transcription adds nothing the gate uses and whisper.cpp would compete with the LLM for 8 GB RAM. Silero VAD (about 2 MB ONNX) would reject noise better but still can't separate speakers. Post-hackathon only |
+
+## Model & Hardware Findings
+
+| Item | Value (measured on the i5-13420H / RTX 3050 4 GB / 7.7 GB laptop) |
+|---|---|
+| Vision model | MediaPipe Face Landmarker (`face_landmarker.task`, vendored), `@mediapipe/tasks-vision` 1.1.0 |
+| Vision runtime | WASM, GPU delegate (WebGL) with automatic CPU fallback. **Not** ONNX Runtime or WebGPU (deviation from PRD §14A.1, disclosed) |
+| Vision speed (fake camera, no face, headless on the Intel iGPU) | GPU: 20 fps (camera-limited), p50 9.3 ms/frame. CPU: 19.3 fps, p50 11.9 ms/frame. RTX-GPU and real-face numbers PENDING MANUAL RUN |
+| Vision cap | 30 fps (lightweight 15). PRD target 5–10 fps; the reading rule was verified at 10, 15 and 30 fps in synthetic tests |
+| LLM | qwen2.5:3b, Q4_K_M GGUF, 3.1B parameters, 1.93 GB on disk, 2.16 GB VRAM, Ollama 0.40.1, context 4096 |
+| LLM invocation | Event-driven only: Moment opened, persisting, Session end; plus a warm-up on load. Never on a timer |
+| LLM input | Question label (clipped), Flag descriptions, follow-up count, gate reason. **No video, audio, landmarks, images or Candidate name** |
+| LLM latency | Cold load 11.4 s. Per Moment p50 5.9 s, p95 12.6 s (shared GPU). Flag → Moment opened 134–273 ms |
+| Memory | Browser 334–385 MB during a live Session; JS heap 23–28 MB, flat over 5 minutes |
+| Fallback mode | Step-down qwen3:4b → qwen3:1.7b → qwen2.5:3b is unit-tested; **not exercised on hardware** because only qwen2.5:3b is installed |
+| 8B+ / multimodal / concurrent LLMs | None |
+
+## Offline Test Results
+
+| Component | Result |
+|---|---|
+| Internet actually blocked (dead proxy, loopback allowed) | PASS |
+| App load (production build) | PASS |
+| Vision model load (vendored, no CDN) | PASS |
+| Third-party requests during a Session | PASS (0, after B1) |
+| Local LLM suggestions | PASS (3/3 from the model) |
+| Session Report | PASS |
+| Full live Session from the production UI with the fake webcam | NOT TESTED (fake device failed under the proxy run) |
+| **Real Wi-Fi-off run on the demo laptop** | **NOT TESTED — PENDING MANUAL RUN** |
+| What stops without internet | Only the online meeting transport (Meet/Zoom/Teams). We never claim it keeps working |
+
+## Remaining Risks
+
+1. **Real-face accuracy is unverified.** If MediaPipe gaze on this webcam is noisy, the Baseline, off-screen and reading rules may misfire. This is the single biggest risk.
+2. **LLM latency of 5–12 s.** A suggestion can take a while, and when it runs out of time it falls back to template text. Keep Ollama warm and close other GPU apps during the demo.
+3. **Qwen3 models from PRD §14A.1 are not installed or benchmarked.** Standard and lightweight modes are verified in code only.
+4. **Window mode has no audio**, so it uses the stricter visual-only rules. It is also untested with a real meeting window.
+5. An in-room Interviewer's voice counts as speech and can mask a real off-screen glance as "thinking".
+6. **A Baseline relearned during a look-away absorbs it.** Recommend resetting only while the Candidate faces the screen.
+7. A Baseline reset during re-observation can let it settle with no gaze evidence.
+8. Labels about honesty or nervousness always get the template follow-up (deliberate false reject).
+9. The report's timestamps and durations from the LLM are not fact-checked, only the Flag kinds it names.
+10. No platform-consent connector (FR-001 option 1). Interviewer confirmation is the only path.
+11. Reload mid-session loses the Session with no warning.
+
+## Pre-Submission Checklist
+
+- [ ] Consent verified *(code + browser PASS; re-check in the real run)*
+- [ ] Source selection verified *(webcam + Local Video PASS; meeting window PENDING)*
+- [ ] Baseline verified *(real face PENDING)*
+- [ ] Thinking pause ignored *(synthetic PASS; real voice + face PENDING)*
+- [ ] Distraction ignored *(synthetic PASS; real PENDING)*
+- [ ] Reading pattern verified *(synthetic PASS; real PENDING)*
+- [ ] Face missing verified *(synthetic PASS; real PENDING)*
+- [ ] Second face verified *(synthetic PASS; real PENDING)*
+- [x] Question tracking verified
+- [x] Follow-up limit verified
+- [x] Stop condition verified
+- [x] Interviewer override verified
+- [x] Local LLM verified *(qwen2.5:3b, 22 live runs)*
+- [x] Banned-word guard verified
+- [x] Audio/speech status documented
+- [x] Database/storage documented
+- [x] Security audit completed
+- [ ] Offline test completed *(simulated PASS; real Wi-Fi-off PENDING)*
+- [ ] Hardware benchmark completed *(LLM + headless vision done; real-face/RTX rows PENDING)*
+- [x] Report verified
+- [ ] PDF export verified *(print stubbed headless; do one real Save as PDF)*
+- [ ] Demo rehearsed
+- [ ] GitHub link ready *(repo pushed; set the URL in `landing/index.html`)*
+- [ ] Demo video ready
+- [ ] X/LinkedIn post ready
+- [x] Hardware disclosure ready *(README + BENCHMARK, actual laptop)*
+- [x] Model disclosure ready
+- [x] Local-vs-cloud disclosure ready
+
+## Top 5 before submission
+
+1. **Real-face rehearsal on the demo laptop** (§14 steps 1–12) in headed Chrome. Check that the status bar shows the GPU, the Baseline completes, a thinking glance is ignored, reading → Moment → Ask → settled, and the limit path works. Fill in the PENDING rows in BENCHMARK.md.
+2. **Real Wi-Fi-off run** with Local Webcam (§14 step 13): vision, Flags, LLM follow-up and report all work. Then stop Ollama and confirm the template fallback (§14 step 14).
+3. **One real PDF:** Export PDF → Save as PDF with Wi-Fi off. Open it and check there are no images and the layout is clean.
+4. **Demo-day setup:**
+   - close other GPU apps;
+   - open the app 1–2 minutes early so the model is warm;
+   - use the webcam for the core demo, and treat meeting-window mode as "shown, not relied on" unless tested with a real call.
+5. **Submission links:**
+   - record the demo video;
+   - set the GitHub, demo and post URLs in `landing/index.html`;
+   - deploy `landing/` and make `og:image` absolute;
+   - publish the X/LinkedIn post.

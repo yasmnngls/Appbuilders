@@ -86,7 +86,7 @@ ui/           Live dashboard            llm/   Ollama: Interviewer Note + Follow
 
 ### 3.2 Evidence gate (initial thresholds, tuned on the demo laptop)
 
-A Moment opens on the first of these, counting only Flags that start after the gate's `watchFrom` time:
+A Moment opens on the first of these. Time before the gate's floor (the later of grace end and `watchFrom`) never counts. A Flag still running at the floor counts for the time after it, unless the Interviewer pressed Continue on it. That covers a pattern carried across an Ask, out of the grace window, or into a new Question:
 
 | Trigger | Threshold |
 |---|---|
@@ -97,7 +97,7 @@ A Moment opens on the first of these, counting only Flags that start after the g
 | Looking off-screen, repeated | ≥ 3 Flags within 60 s (≥ 4 when speech context is unavailable) |
 
 The gate **never** opens:
-- before the Baseline is ready;
+- for gaze triggers (off-screen, reading) before the Baseline is ready. Face triggers work without it;
 - in the first 10 s of a Question (thinking time);
 - on an off-screen glance inside a speech pause of ≤ 4 s after which speech resumed (dead-air / thinking case, PRD §11.1). A glance inside a still-open pause is not counted yet.
 
