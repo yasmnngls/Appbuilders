@@ -12,7 +12,10 @@
     "assets": "node scripts/fetch-assets.mjs",
     "bench:llm": "node scripts/bench-llm.mjs",
     "landing:dev": "npm --prefix landing run dev",
-    "landing:build": "npm --prefix landing run build"
+    "landing:build": "npm --prefix landing run build",
+    "whisper": "node scripts/whisper-server.mjs",
+    "whisper:setup": "powershell -ExecutionPolicy Bypass -File scripts/whisper-setup.ps1",
+    "bench:whisper": "node scripts/bench-whisper.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.1.0",
