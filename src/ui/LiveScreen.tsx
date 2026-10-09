@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from "react";
 import { finish, newQuestion, resetBaseline } from "../app/controller";
 import { FLAG_LABELS, type Flag, type Moment, type Question } from "../domain/types";
 import { formatTime } from "../llm/notes";
-import { currentQuestion, selectScreen, sessionNow, setOpenFlag, store, useStore } from "../store/session";
+import { currentQuestion, MAX_LABEL_LENGTH, selectScreen, sessionNow, setOpenFlag, store, useStore } from "../store/session";
 import { FlagDetails } from "./FlagDetails";
 import { FollowUpCard } from "./FollowUpCard";
 import { VideoPanel } from "./VideoPanel";
@@ -113,6 +113,7 @@ function CurrentQuestion() {
           }}
           placeholder="Next Question label (optional)"
           autoComplete="off"
+          maxLength={MAX_LABEL_LENGTH}
           className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
         />
         <button type="button" onClick={next} className="press shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400">

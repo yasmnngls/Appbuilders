@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { confirmConsent } from "../app/controller";
+import { MAX_NAME_LENGTH } from "../store/session";
 
 export const CONSENT_SCRIPT =
   "Before we start: this interview uses on-device gaze analysis on my laptop. It notes where your eyes and face are " +
@@ -46,6 +47,7 @@ export function ConsentScreen() {
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Juan dela Cruz"
           autoComplete="off"
+          maxLength={MAX_NAME_LENGTH}
           className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 outline-none focus:border-emerald-500"
         />
       </label>

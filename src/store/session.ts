@@ -132,12 +132,16 @@ export const currentQuestion = (s: Session): Question => s.questions[s.questions
 
 const questionLabel = (q: Question) => `Q${q.number} ${q.label}`;
 
+/** Longest Candidate name / Question label kept. Labels go into the local LLM prompt and the report. */
+export const MAX_NAME_LENGTH = 100;
+export const MAX_LABEL_LENGTH = 200;
+
 // ---------------------------------------------------------------------------
 // Screen 1 / 2
 
 /** Screen 1 Continue: consent recorded (FR-001). */
 export function confirmConsent(candidateName: string) {
-  store.set({ draft: { candidateName: candidateName.trim(), consentAt: Date.now() } });
+  store.set({ draft: { candidateName: candidateName.trim().slice(0, MAX_NAME_LENGTH), consentAt: Date.now() } });
 }
 
 export function setSourceReady(sourceReady: LiveState["sourceReady"]) {
@@ -147,8 +151,10 @@ export function setSourceReady(sourceReady: LiveState["sourceReady"]) {
 // ---------------------------------------------------------------------------
 // Session lifecycle
 
-export function startSession(input: { source: Session["source"]; speechAvailable: boolean; llmModel: string | null }) {
-  const draft = state.draft ?? { candidateName: "", consentAt: Date.now() };
+/** FR-001: a Session only starts from a confirmed Consent (the draft). Returns false, and starts nothing, without one. */
+export function startSession(input: { source: Session["source"]; speechAvailable: boolean; llmModel: string | null }): boolean {
+  const draft = state.draft;
+  if (!draft) return false;
   const q1: Question = { id: uid(), number: 1, label: "Introduction", start: 0 };
   // Same shape as rules/followUp initialFollowUp(q1.id, 0).
   const followUp: FollowUpState = { questionId: q1.id, phase: "observing", used: 0, reObserveUntil: null, momentId: null, watchFrom: 0, askedMomentId: null };
@@ -174,6 +180,7 @@ export function startSession(input: { source: Session["source"]; speechAvailable
       report: null,
     },
   });
+  return true;
 }
 
 /** Adds a Question. The controller then sends `question_started` through the follow-up reducer. */
@@ -181,7 +188,7 @@ export function nextQuestion(label?: string): Question | null {
   const s = state.session;
   if (!s || s.endedAt !== null) return null;
   const number = s.questions.length + 1;
-  const q: Question = { id: uid(), number, label: label?.trim() || `Question ${number}`, start: sessionNow() };
+  const q: Question = { id: uid(), number, label: label?.trim().slice(0, MAX_LABEL_LENGTH) || `Question ${number}`, start: sessionNow() };
   updateSession((x) => ({ ...x, questions: [...x.questions, q] }));
   store.set({ openFlagId: null });
   return q;

@@ -1,7 +1,8 @@
 import { FLAG_LABELS, type Session } from "../domain/types";
 import { formatTime } from "../llm/notes";
 import { buildJourneys, downloadFile, toJSON, toMarkdown, type QuestionJourney } from "../llm/report";
-import { clearSession, useStore } from "../store/session";
+import { newSession } from "../app/controller";
+import { useStore } from "../store/session";
 
 const secondary = "press rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -32,7 +33,9 @@ const slug = (s: string) =>
 /** M10: browser print-to-PDF. Chrome/Edge use document.title as the suggested file name. */
 export function exportPdf(session: Session) {
   const previous = document.title;
-  const date = new Date(session.startedAt).toISOString().slice(0, 10);
+  // Local date, matching the Markdown/JSON file names (toISOString would be UTC).
+  const started = new Date(session.startedAt);
+  const date = new Date(started.getTime() - started.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
   document.title = `${slug(session.candidateName)}-${date}-session-report`;
   const restore = () => {
     document.title = previous;
@@ -97,7 +100,7 @@ export function ReportScreen() {
           <button type="button" disabled={!ready} onClick={() => downloadFile(`${base}.json`, toJSON(session), "application/json")} className={secondary}>
             Export JSON
           </button>
-          <button type="button" onClick={clearSession} className={secondary}>
+          <button type="button" onClick={newSession} className={secondary}>
             New session
           </button>
         </div>

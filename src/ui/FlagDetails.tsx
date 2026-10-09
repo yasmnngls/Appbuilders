@@ -33,12 +33,15 @@ export function FlagDetails() {
 
   const e = flag ? explainFlag(flag, sessionNow()) : null;
   const budgetLeft = followUp ? followUp.used < MAX_FOLLOW_UPS : false;
-  const canExplore = !!flag && !flag.dismissed && followUp?.phase === "observing" && budgetLeft;
+  const currentQuestion = !!flag && flag.questionId === followUp?.questionId;
+  const canExplore = !!flag && !flag.dismissed && currentQuestion && followUp?.phase === "observing" && budgetLeft;
   const whyNot = !flag
     ? ""
     : flag.dismissed
       ? "This Flag was dismissed."
-      : !budgetLeft
+      : !currentQuestion
+        ? "This Flag belongs to an earlier Question."
+        : !budgetLeft
         ? "The follow-up limit for this Question is reached."
         : followUp?.phase !== "observing"
           ? "A follow-up is already in progress, or suggestions are paused for this Question."

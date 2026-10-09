@@ -93,6 +93,8 @@ export function confirmConsent(candidateName: string) {
 
 /** Screen 2: opens a Source and shows it in the shared <video>. Replaces any previously open Source. */
 export async function openSource(kind: Session["source"], file?: File): Promise<void> {
+  // FR-001: no camera, window or file is opened before Consent is confirmed.
+  if (!store.get().draft) throw new Error("Confirm Consent first.");
   closeSource();
   const onEnded = () => {
     if (isLive()) void finish();
@@ -145,7 +147,8 @@ export function closeSource() {
 
 export function startBaseline() {
   const ready = store.get().sourceReady;
-  if (!ready || isLive()) return;
+  // FR-001: observation never starts without Consent confirmed for this Session.
+  if (!ready || isLive() || !store.get().draft) return;
   finishing = false;
   pauses = [];
   llmAbort = new AbortController();
@@ -154,7 +157,11 @@ export function startBaseline() {
   // Speech context (FR-005A): null = no audio track → stricter visual-only thresholds.
   const startT = Date.now();
   stopSpeech = stream ? attachSpeechActivity(stream, () => (store.get().session ? sessionNow() : Date.now() - startT), onSpeech) : null;
-  S.startSession({ source: ready.kind, speechAvailable: stopSpeech !== null, llmModel: currentModel() });
+  if (!S.startSession({ source: ready.kind, speechAvailable: stopSpeech !== null, llmModel: currentModel() })) {
+    stopSpeech?.();
+    stopSpeech = null;
+    return;
+  }
   S.setSpeech(stopSpeech ? "pause" : "unavailable");
 
   engine = new RuleEngine();
@@ -320,6 +327,10 @@ export function followUpAction(a: "ask" | "continue" | "dismiss") {
 /** Flag Details → Explore: opens a Moment from this Flag (origin "interviewer"). */
 export function exploreFlag(flagId: string) {
   S.setOpenFlag(null);
+  const s = store.get().session;
+  const flag = s?.flags.find((f) => f.id === flagId);
+  // Same rule as the Explore button: a live, undismissed Flag of the current Question.
+  if (!s || !flag || flag.dismissed || flag.questionId !== s.followUp.questionId) return;
   dispatch({ type: "explore", flagId, momentId: uid(), t: sessionNow() });
 }
 
@@ -386,6 +397,14 @@ export async function finish(): Promise<void> {
   } finally {
     if (reportAbort === mine) reportAbort = null;
   }
+}
+
+/** Report → New session: cancels a report still being written, then returns to Screen 1 (Consent is asked again). */
+export function newSession() {
+  reportAbort?.abort();
+  reportAbort = null;
+  closeSource();
+  S.clearSession();
 }
 
 export const currentCrop = () => crop;
