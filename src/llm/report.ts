@@ -1,6 +1,6 @@
-import { FLAG_LABELS, MAX_FOLLOW_UPS, type Flag, type FlagKind, type Moment, type Question, type Session, type SessionReport, type SessionTime } from "../domain/types";
+import { FLAG_LABELS, MAX_FOLLOW_UPS, type Flag, type FlagKind, type FollowUpReasoning, type Moment, type Question, type Session, type SessionReport, type SessionTime, type TimelineEvent } from "../domain/types";
 import { LLM } from "./config";
-import { promptLabel } from "./contract";
+import { promptLabel, questionText } from "./contract";
 import { clip, findBanned, MAX_FOLLOW_UP_CHARS } from "./guard";
 import { formatTime } from "./notes";
 import { chatJSON, isLightweight } from "./ollama";
@@ -10,11 +10,15 @@ export const PRIVACY_FOOTER = "Generated on-device. No video or images were stor
 /** One Question's path through the Adaptive Follow-Up Loop, built deterministically from Flags, Moments and the timeline. */
 export interface QuestionJourney {
   question: Question;
+  /** The Question as asked: the spoken text when detected from speech, else the label. */
+  questionText: string;
   flags: Flag[];
   /** In order. */
   moments: Moment[];
-  /** Only follow-ups the Interviewer actually asked. */
-  followUpsAsked: { text: string; at: SessionTime; n: number }[];
+  /** Only follow-ups the Interviewer actually asked, with why each was suggested. */
+  followUpsAsked: { text: string; at: SessionTime; n: number; reasoning?: FollowUpReasoning | null }[];
+  /** Moments where no follow-up was suggested, with the reason (answer covered, too brief, no transcript…). */
+  notSuggested: { at: SessionTime; reason: string }[];
   outcome: "none" | "observed" | "continued" | "dismissed" | "settled" | "persisting" | "limit_reached" | "unresolved";
 }
 
@@ -43,6 +47,27 @@ function outcomeOf(session: Session, q: Question, flags: Flag[], moments: Moment
   }
 }
 
+/** The Question as asked: spoken text (flattened, clipped) when present, else the label. */
+export function spokenOrLabel(q: Question): string {
+  return q.text?.trim() ? promptLabel(q.text) : q.label;
+}
+
+/** "Unclear: <gap> — <reason>", or the reason alone when no gap is named. Empty without reasoning. */
+export function reasoningText(r: FollowUpReasoning | null | undefined): string {
+  if (!r) return "";
+  return r.gap ? `Unclear: ${r.gap} — ${r.reason}` : r.reason;
+}
+
+const SPEECH_TEXT: Partial<Record<TimelineEvent["kind"], string>> = {
+  "interviewer-speech": "Interviewer speech",
+  "candidate-speech": "Candidate speech",
+};
+
+/** Timeline line for exports and the report screen. Speech events never show transcript text (that is only in the JSON export). */
+export function timelineText(e: TimelineEvent): string {
+  return SPEECH_TEXT[e.kind] ?? e.text;
+}
+
 /** Question Journeys in Question order: Question → Moment explored → Follow-up → Result. */
 export function buildJourneys(session: Session): QuestionJourney[] {
   return session.questions.map((question) => {
@@ -50,8 +75,19 @@ export function buildJourneys(session: Session): QuestionJourney[] {
     const moments = session.moments.filter((m) => m.questionId === question.id).sort((a, b) => a.t - b.t);
     const followUpsAsked = moments
       .filter((m) => m.decision === "asked" && m.followUp)
-      .map((m) => ({ text: m.followUp as string, at: m.askedAt ?? m.t, n: m.followUpNumber }));
-    return { question, flags, moments, followUpsAsked, outcome: outcomeOf(session, question, flags, moments, followUpsAsked.length) };
+      .map((m) => ({ text: m.followUp as string, at: m.askedAt ?? m.t, n: m.followUpNumber, ...(m.reasoning ? { reasoning: m.reasoning } : {}) }));
+    const notSuggested = moments
+      .filter((m) => m.followUp === null && m.reasoning && m.suggestion !== "generating")
+      .map((m) => ({ at: m.t, reason: (m.reasoning as FollowUpReasoning).reason }));
+    return {
+      question,
+      questionText: spokenOrLabel(question),
+      flags,
+      moments,
+      followUpsAsked,
+      notSuggested,
+      outcome: outcomeOf(session, question, flags, moments, followUpsAsked.length),
+    };
   });
 }
 
@@ -158,6 +194,7 @@ export function journeysText(session: Session): string {
   for (const j of buildJourneys(session)) {
     // The label is Interviewer-typed: one line, clipped, JSON-quoted so it reads as data, not instructions.
     lines.push("", `Q${j.question.number} ${JSON.stringify(promptLabel(j.question.label))} (starts ${formatTime(j.question.start)}):`);
+    if (j.question.text?.trim()) lines.push(`- Asked as: ${JSON.stringify(clip(promptLabel(j.question.text), MAX_FOLLOW_UP_CHARS))}`);
     if (!j.flags.length) lines.push("- no Flags");
     for (const f of j.flags) lines.push(`- ${FLAG_LABELS[f.kind]} at ${formatTime(f.start)} for ${durationSec(f, endT)}s${f.dismissed ? " (dismissed by the interviewer)" : ""}`);
     for (const m of j.moments) lines.push(`- Moment worth exploring at ${formatTime(m.t)}: ${m.reason}; interviewer decision: ${m.decision}${m.result ? `; result: ${m.result}` : ""}`);
@@ -255,13 +292,22 @@ export function toMarkdown(session: Session): string {
     const q = j.question;
     const entry = report.perQuestion.find((p) => p.questionId === q.id);
     lines.push("", `## Q${q.number} · ${q.label} · ${formatTime(q.start)}`, "");
+    if (q.text?.trim()) lines.push(`**Question:** "${j.questionText}"`, "");
     const explored = j.moments.length ? MOMENT_TEXT[j.moments[0].kind] : "No moment explored";
     const fu = j.followUpsAsked.length ? j.followUpsAsked.map((a) => `"${a.text}"`).join(" / ") : "none asked";
     lines.push(`**Journey:** Question → ${explored} → Follow-up: ${fu} → ${OUTCOME_TEXT[j.outcome]}`, "");
     if (entry) lines.push(entry.observation, "");
     if (j.followUpsAsked.length) {
       lines.push("**Follow-ups asked**", "");
-      for (const a of j.followUpsAsked) lines.push(`- ${formatTime(a.at)} (follow-up ${a.n}): "${a.text}"`);
+      for (const a of j.followUpsAsked) {
+        lines.push(`- ${formatTime(a.at)} (follow-up ${a.n}): "${a.text}"`);
+        if (a.reasoning) lines.push(`  - Why: ${reasoningText(a.reasoning)}`);
+      }
+      lines.push("");
+    }
+    if (j.notSuggested.length) {
+      lines.push("**No follow-up suggested**", "");
+      for (const n of j.notSuggested) lines.push(`- ${formatTime(n.at)}: ${n.reason}`);
       lines.push("");
     }
     lines.push("**Flags**", "");
@@ -284,13 +330,13 @@ export function toMarkdown(session: Session): string {
     "## Session Timeline",
     "",
   );
-  if (session.timeline.length) for (const e of [...session.timeline].sort((a, b) => a.t - b.t)) lines.push(`- ${formatTime(e.t)} — ${e.text}`);
+  if (session.timeline.length) for (const e of [...session.timeline].sort((a, b) => a.t - b.t)) lines.push(`- ${formatTime(e.t)} — ${timelineText(e)}`);
   else lines.push("- No events");
   lines.push("", "---", "", `_${PRIVACY_FOOTER}_`, "");
   return lines.join("\n");
 }
 
-/** Full Session as pretty-printed JSON (it holds no images by construction). */
+/** Full Session as pretty-printed JSON (it holds no images by construction). The only export with the transcript text. */
 export function toJSON(session: Session): string {
   return JSON.stringify(session, null, 2);
 }

@@ -1,6 +1,6 @@
 import { FLAG_LABELS, type Session } from "../domain/types";
 import { formatTime } from "../llm/notes";
-import { buildJourneys, downloadFile, toJSON, toMarkdown, type QuestionJourney } from "../llm/report";
+import { buildJourneys, downloadFile, reasoningText, timelineText, toJSON, toMarkdown, type QuestionJourney } from "../llm/report";
 import { newSession } from "../app/controller";
 import { useStore } from "../store/session";
 
@@ -168,7 +168,7 @@ export function ReportScreen() {
               .map((e, i) => (
                 <li key={i} className="flex gap-3">
                   <span className="print-muted w-12 shrink-0 font-mono text-xs leading-5 tabular-nums text-zinc-500">{formatTime(e.t)}</span>
-                  <span className="text-zinc-300">{e.text}</span>
+                  <span className={e.kind === "interviewer-speech" || e.kind === "candidate-speech" ? "text-zinc-500" : "text-zinc-300"}>{timelineText(e)}</span>
                 </li>
               ))}
           </ol>
@@ -218,6 +218,8 @@ function QuestionBlock({ journey: j, observation, endT }: { journey: QuestionJou
         ))}
       </ol>
 
+      {q.text?.trim() && <p className="mt-2 text-sm text-zinc-400">“{j.questionText}”</p>}
+
       {observation && <p className="mt-3 text-sm leading-relaxed text-zinc-300">{observation}</p>}
 
       {j.followUpsAsked.length > 0 && (
@@ -225,6 +227,18 @@ function QuestionBlock({ journey: j, observation, endT }: { journey: QuestionJou
           {j.followUpsAsked.map((a) => (
             <li key={a.at} className="text-zinc-300">
               <span className="print-muted font-mono text-xs text-zinc-500">{formatTime(a.at)} · follow-up {a.n} · </span>“{a.text}”
+              {a.reasoning && <span className="print-muted block text-xs text-zinc-500">{reasoningText(a.reasoning)}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {j.notSuggested.length > 0 && (
+        <ul className="print-muted mt-2 flex flex-col gap-1 text-xs text-zinc-500">
+          {j.notSuggested.map((n) => (
+            <li key={n.at}>
+              <span className="font-mono">{formatTime(n.at)} · </span>
+              {n.reason}
             </li>
           ))}
         </ul>

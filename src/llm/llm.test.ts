@@ -448,6 +448,28 @@ describe("report", () => {
   });
 });
 
+describe("report: reasoning and transcript", () => {
+  it("Markdown shows the spoken question and the follow-up reasoning, never transcript text; JSON keeps the transcript", () => {
+    const s = finishedSession();
+    s.questions[1] = { ...s.questions[1], origin: "spoken", text: "Tell me about a difficult project you've worked on." };
+    s.moments[0] = { ...s.moments[0], reasoning: { question: "q", answer: ANSWER, gap: "personal contribution", reason: "The answer describes the team's work (\"we\" ×1) but not what the Candidate personally did.", basis: "transcript" } };
+    s.moments.push(moment({ id: "m9", questionId: "q3", t: 210000, followUp: null, suggestion: "fallback", decision: "continued", reasoning: { question: "q", answer: "", gap: null, reason: NO_TRANSCRIPT_REASON, basis: "no-transcript" } }));
+    s.timeline.push({ t: 63000, kind: "candidate-speech", questionId: "q2", text: ANSWER }, { t: 60500, kind: "interviewer-speech", questionId: "q2", text: "secret interviewer words" });
+    const md = toMarkdown(s);
+    expect(md).toContain(`**Question:** "Tell me about a difficult project you've worked on."`);
+    expect(md).toContain("  - Why: Unclear: personal contribution — The answer describes the team's work");
+    expect(md).toContain(`No follow-up suggested**`);
+    expect(md).toContain(NO_TRANSCRIPT_REASON);
+    expect(md).toContain("— Candidate speech");
+    expect(md).not.toContain(ANSWER);
+    expect(md).not.toContain("secret interviewer words");
+    const json = JSON.parse(toJSON(s));
+    expect(json.transcript.map((t: { text: string }) => t.text)).toContain(ANSWER);
+    expect(json.moments[0].reasoning.gap).toBe("personal contribution");
+    expect(buildJourneys(s)[1].questionText).toBe("Tell me about a difficult project you've worked on.");
+  });
+});
+
 describe("guard: state of mind and accusations (PRD §18.1, §18.6, §28)", () => {
   const ctx = { question: LABEL, answer: "", previous: [] as string[] };
   const NEVER = [
