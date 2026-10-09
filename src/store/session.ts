@@ -12,8 +12,10 @@ import {
   type SessionReport,
   type SessionTime,
   type Signal,
+  type Speaker,
   type SpeechState,
   type TimelineEvent,
+  type TranscriptSegment,
 } from "../domain/types";
 
 export type Screen = "consent" | "source" | "baseline" | "live" | "report";
@@ -30,8 +32,22 @@ export interface LiveState {
   online: boolean;
   /** Set on Screen 1 Continue, before a Session exists. */
   draft: { candidateName: string; consentAt: number } | null;
-  /** Screen 2 preview: a Source is open and showing. */
-  sourceReady: { kind: Session["source"]; hasAudio: boolean } | null;
+  /**
+   * Screen 2 preview: a Source is open and showing. hasAudio = Candidate-side audio for speech context
+   * (interview audio, or the shared mic for the webcam). mic = a separate Interviewer mic is open.
+   */
+  sourceReady: {
+    kind: Session["source"];
+    hasAudio: boolean;
+    mic?: boolean;
+    interviewAudio?: boolean;
+    /** Honest capture limit shown on Screen 2, e.g. a shared window without audio. */
+    notice?: string | null;
+  } | null;
+  /** Local speech recognition (whisper.cpp) as last checked; null = not checked yet. */
+  asrStatus: { available: boolean; model: string | null } | null;
+  /** Utterance capture is running (audio is being segmented and transcribed locally). */
+  listening: boolean;
   speech: SpeechState;
   llmModel: string | null;
   llmLatencyMs: number | null;
@@ -53,6 +69,8 @@ const initialState = (): LiveState => ({
   online: typeof navigator === "undefined" ? true : navigator.onLine,
   draft: null,
   sourceReady: null,
+  asrStatus: null,
+  listening: false,
   speech: "unavailable",
   llmModel: null,
   llmLatencyMs: null,
@@ -186,14 +204,70 @@ export function startSession(input: { source: Session["source"]; speechAvailable
 }
 
 /** Adds a Question. The controller then sends `question_started` through the follow-up reducer. */
-export function nextQuestion(label?: string): Question | null {
+export function nextQuestion(label?: string, meta?: { origin?: Question["origin"]; text?: string }): Question | null {
   const s = state.session;
   if (!s || s.endedAt !== null) return null;
   const number = s.questions.length + 1;
-  const q: Question = { id: uid(), number, label: label?.trim().slice(0, MAX_LABEL_LENGTH) || `Question ${number}`, start: sessionNow() };
+  const q: Question = {
+    id: uid(),
+    number,
+    label: label?.trim().slice(0, MAX_LABEL_LENGTH) || `Question ${number}`,
+    start: sessionNow(),
+    origin: meta?.origin ?? "manual",
+  };
+  if (meta?.text) q.text = meta.text.trim().slice(0, MAX_QUESTION_TEXT);
   updateSession((x) => ({ ...x, questions: [...x.questions, q] }));
   store.set({ openFlagId: null });
   return q;
+}
+
+/** Longest spoken Question text kept. */
+export const MAX_QUESTION_TEXT = 500;
+
+/** The first detected spoken question gives the auto-created Q1 its real text (instead of starting Q2). */
+export function relabelQuestion(id: string, text: string, label: string) {
+  updateSession((s) => {
+    const q0 = s.questions.find((q) => q.id === id);
+    if (!q0) return s;
+    const q: Question = { ...q0, origin: "spoken", text: text.trim().slice(0, MAX_QUESTION_TEXT), label: label.trim().slice(0, MAX_LABEL_LENGTH) || q0.label };
+    return {
+      ...s,
+      questions: s.questions.map((x) => (x.id === id ? q : x)),
+      timeline: s.timeline.map((e) => (e.kind === "question" && e.questionId === id ? { ...e, text: `Question started — ${questionLabel(q)}` } : e)),
+    };
+  });
+}
+
+/** Timeline text for speech is clipped; the full text stays in the transcript. */
+export const SPEECH_CLIP = 80;
+const clip = (t: string, n = SPEECH_CLIP) => (t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t);
+const SPEAKER_NAME: Record<Speaker, string> = { interviewer: "Interviewer", candidate: "Candidate", mixed: "Speaker" };
+
+/**
+ * Appends one locally transcribed utterance (text only) and its timeline event.
+ * questionId defaults to the Question active when the utterance started.
+ */
+export function appendTranscript(
+  seg: { speaker: Speaker; start: SessionTime; end: SessionTime; text: string; questionId?: string },
+  kind: "interviewer-speech" | "candidate-speech",
+): TranscriptSegment | null {
+  const s0 = state.session;
+  const text = seg.text.trim();
+  if (!s0 || !text) return null;
+  const q = (seg.questionId && s0.questions.find((x) => x.id === seg.questionId)) || [...s0.questions].reverse().find((x) => x.start <= seg.start) || currentQuestion(s0);
+  const out: TranscriptSegment = { id: uid(), speaker: seg.speaker, start: seg.start, end: Math.max(seg.start, seg.end), text, questionId: q.id };
+  const ev: TimelineEvent = { t: seg.start, kind, questionId: q.id, text: `${SPEAKER_NAME[seg.speaker]}: “${clip(text)}”` };
+  updateSession((s) => ({ ...s, transcript: [...s.transcript, out], timeline: [...s.timeline, ev] }));
+  return out;
+}
+
+export function setAsr(asr: { available: boolean; model: string | null }) {
+  store.set({ asrStatus: asr });
+  updateSession((s) => (s.endedAt === null && (s.asr.available !== asr.available || s.asr.model !== asr.model) ? { ...s, asr } : s));
+}
+
+export function setListening(listening: boolean) {
+  if (state.listening !== listening) store.set({ listening });
 }
 
 type Transition = FlagTransition & { evidence?: FlagEvidence };
@@ -307,5 +381,6 @@ export function clearSession() {
     llmLatencyMs: state.llmLatencyMs,
     lightweight: state.lightweight,
     online: state.online,
+    asrStatus: state.asrStatus,
   });
 }
