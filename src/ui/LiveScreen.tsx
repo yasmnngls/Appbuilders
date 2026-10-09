@@ -1,31 +1,67 @@
-import { useEffect, useRef, useState } from "react";
-import { finish } from "../app/controller";
-import { FLAG_LABELS, type Flag, type Question } from "../domain/types";
+import { useEffect, useId, useState } from "react";
+import { finish, newQuestion, resetBaseline } from "../app/controller";
+import { FLAG_LABELS, type Flag, type Moment, type Question } from "../domain/types";
 import { formatTime } from "../llm/notes";
-import { nextQuestion, sessionNow, useStore } from "../store/session";
+import { currentQuestion, selectScreen, sessionNow, setOpenFlag, store, useStore } from "../store/session";
+import { FlagDetails } from "./FlagDetails";
+import { FollowUpCard } from "./FollowUpCard";
 import { VideoPanel } from "./VideoPanel";
 
+/** Screens 3 and 4 (FR-004, FR-007, FR-008). The Baseline overlay lives in the video panel. */
 export function LiveScreen() {
+  useNewQuestionHotkey();
+  const learning = useStore((s) => selectScreen(s) === "baseline");
+
   return (
-    <div className="grid h-full min-h-0 gap-5 p-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
+    <div className="grid min-h-full gap-5 p-5 lg:h-full lg:grid-cols-[minmax(0,1.6fr)_minmax(340px,1fr)]">
       <section className="flex min-h-0 flex-col gap-4">
         <VideoPanel />
-        <SignalReadout />
+        <Diagnostics />
       </section>
       <aside className="flex min-h-0 flex-col gap-4">
-        <QuestionBar />
-        <FlagList />
-        <NotesPanel />
-        <button
-          type="button"
-          onClick={() => void finish()}
-          className="press rounded-lg bg-zinc-100 px-4 py-2.5 font-medium text-zinc-950 hover:bg-white"
-        >
-          End session & write report
-        </button>
+        <FollowUpCard />
+        <CurrentQuestion />
+        <Recent />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={resetBaseline}
+            disabled={learning}
+            className="press rounded-lg border border-zinc-700 px-3 py-2.5 text-sm hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Reset baseline
+          </button>
+          <button
+            type="button"
+            onClick={() => void finish()}
+            className="press flex-1 rounded-lg bg-zinc-100 px-4 py-2.5 font-medium text-zinc-950 hover:bg-white"
+          >
+            End session
+          </button>
+        </div>
       </aside>
+      <FlagDetails />
     </div>
   );
+}
+
+const isTyping = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.isContentEditable || t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement);
+
+/** N starts a new Question. Never while typing, never with modifiers, never under an overlay. No animation. */
+function useNewQuestionHotkey() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "n" || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      if (isTyping(e.target) || isTyping(document.activeElement)) return;
+      const s = store.get();
+      if (s.openFlagId || !s.session || s.session.endedAt) return;
+      e.preventDefault();
+      newQuestion();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 }
 
 /** Re-renders once a second so running clocks and ongoing durations tick. */
@@ -37,137 +73,156 @@ function useTick() {
   }, []);
 }
 
-function QuestionBar() {
+function CurrentQuestion() {
   useTick();
-  const question = useStore((s) => s.session!.questions.at(-1)!);
+  const question = useStore((s) => currentQuestion(s.session!));
   const [label, setLabel] = useState("");
-  const input = useRef<HTMLInputElement>(null);
+  const inputId = useId();
+  const now = sessionNow();
 
   const next = () => {
-    nextQuestion(label);
+    newQuestion(label.trim() || undefined);
     setLabel("");
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== "n" || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (document.activeElement instanceof HTMLInputElement) return;
-      e.preventDefault();
-      nextQuestion();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-zinc-400">Now asking</span>
-        <span className="font-mono tabular-nums text-zinc-400">{formatTime(sessionNow())}</span>
+    <section aria-label="Current Question" className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+      <div className="flex items-center justify-between text-xs uppercase tracking-wide text-zinc-500">
+        <span>Current Question</span>
+        <span className="font-mono normal-case tabular-nums tracking-normal">
+          <span className="text-zinc-300">{formatTime(now - question.start)}</span>
+          <span className="text-zinc-600"> · session {formatTime(now)}</span>
+        </span>
       </div>
       <div className="mt-1 text-lg font-medium">
         Q{question.number} · {question.label}
       </div>
       <div className="mt-3 flex gap-2">
+        <label htmlFor={inputId} className="sr-only">
+          Next Question label
+        </label>
         <input
-          ref={input}
+          id={inputId}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               next();
-              input.current?.blur();
-            }
+              e.currentTarget.blur();
+            } else if (e.key === "Escape") e.currentTarget.blur();
           }}
-          placeholder="Next question label (optional)"
+          placeholder="Next Question label (optional)"
+          autoComplete="off"
           className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm outline-none focus:border-emerald-500"
         />
-        <button
-          type="button"
-          onClick={next}
-          className="press rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400"
-        >
-          Next question <kbd className="ml-1 rounded bg-emerald-700/40 px-1 text-xs">N</kbd>
+        <button type="button" onClick={next} className="press shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400">
+          + New Question <kbd className="ml-1 rounded bg-emerald-700/40 px-1 text-xs">N</kbd>
         </button>
       </div>
-    </div>
+    </section>
   );
 }
 
-const duration = (f: Flag) => (f.end === null ? sessionNow() : f.end) - f.start;
+type Row = { kind: "flag"; t: number; flag: Flag } | { kind: "moment"; t: number; moment: Moment };
 
-function FlagList() {
+const momentStatus = (m: Moment): string => {
+  switch (m.decision) {
+    case "pending":
+      return "open";
+    case "continued":
+      return "continued";
+    case "dismissed":
+      return "dismissed";
+    case "asked":
+      return m.result === "settled" ? "follow-up asked · settled" : m.result === "persisting" ? "follow-up asked · pattern continued" : "follow-up asked";
+  }
+};
+
+function Recent() {
   useTick();
   const flags = useStore((s) => s.session!.flags);
+  const moments = useStore((s) => s.session!.moments);
   const questions = useStore((s) => s.session!.questions);
   const byId = new Map<string, Question>(questions.map((q) => [q.id, q]));
+  const qLabel = (id: string | null) => {
+    const q = id ? byId.get(id) : undefined;
+    return q ? `Q${q.number}` : "";
+  };
+  const now = sessionNow();
+
+  const rows: Row[] = [
+    ...flags.map((flag): Row => ({ kind: "flag", t: flag.start, flag })),
+    ...moments.map((moment): Row => ({ kind: "moment", t: moment.t, moment })),
+  ].sort((a, b) => b.t - a.t || (a.kind === "moment" ? -1 : 1));
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-zinc-800 bg-zinc-900">
-      <div className="border-b border-zinc-800 px-4 py-3 text-sm font-medium">Flags · {flags.length}</div>
+    <section aria-label="Recent" className="flex min-h-48 flex-1 flex-col rounded-xl border border-zinc-800 bg-zinc-900">
+      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3 text-xs uppercase tracking-wide text-zinc-500">
+        <span>Recent</span>
+        <span className="normal-case tracking-normal">
+          {flags.length} Flag{flags.length === 1 ? "" : "s"} · {moments.length} Moment{moments.length === 1 ? "" : "s"}
+        </span>
+      </div>
       <ol className="min-h-0 flex-1 overflow-y-auto">
-        {flags.length === 0 && <li className="px-4 py-6 text-center text-sm text-zinc-500">No observations yet.</li>}
-        {[...flags].reverse().map((f) => {
-          const q = f.questionId ? byId.get(f.questionId) : undefined;
-          return (
-            <li key={f.id} className="enter flex items-start gap-3 border-b border-zinc-800/60 px-4 py-2.5 last:border-0">
-              <span
-                className={`mt-1.5 size-2 shrink-0 rounded-full ${f.end === null ? "animate-pulse bg-amber-400" : "bg-zinc-500"}`}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium">{FLAG_LABELS[f.kind]}</span>
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-zinc-400">
-                    {formatTime(f.start)}
-                    {f.end !== null && `–${formatTime(f.end)}`} · {Math.round(duration(f) / 1000)}s
+        {rows.length === 0 && <li className="px-4 py-6 text-center text-sm text-zinc-500">No observations yet.</li>}
+        {rows.map((r) =>
+          r.kind === "flag" ? (
+            <li key={r.flag.id} className="card-enter border-b border-zinc-800/60 last:border-0">
+              <button
+                type="button"
+                onClick={() => setOpenFlag(r.flag.id)}
+                className={`flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-zinc-800/50 ${r.flag.dismissed ? "opacity-50" : ""}`}
+              >
+                <span aria-hidden className={`mt-1.5 size-2 shrink-0 rounded-full ${r.flag.end === null ? "bg-amber-400/80" : "bg-zinc-600"}`} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium">{FLAG_LABELS[r.flag.kind]}</span>
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-zinc-400">
+                      {formatTime(r.flag.start)} · {Math.max(0, Math.round(((r.flag.end ?? now) - r.flag.start) / 1000))}s
+                    </span>
                   </span>
-                </div>
-                <div className="text-xs text-zinc-400">
-                  {q && `Q${q.number}`}
-                  {f.detail && ` · ${f.detail}`}
-                </div>
-              </div>
+                  <span className="block text-xs text-zinc-400">
+                    {[qLabel(r.flag.questionId), r.flag.end === null ? "ongoing" : null, r.flag.detail, r.flag.dismissed ? "dismissed" : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </span>
+              </button>
             </li>
-          );
-        })}
+          ) : (
+            <li key={r.moment.id} className="card-enter flex items-start gap-3 border-b border-zinc-800/60 px-4 py-2.5 last:border-0">
+              <span aria-hidden className={`mt-1.5 size-2 shrink-0 rounded-full ${r.moment.result === "settled" ? "bg-emerald-400" : r.moment.decision === "pending" ? "bg-amber-400/80" : "bg-zinc-600"}`} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium">Moment worth exploring</span>
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-zinc-400">{formatTime(r.moment.t)}</span>
+                </span>
+                <span className="block text-xs text-zinc-400">
+                  {[qLabel(r.moment.questionId), r.moment.reason, momentStatus(r.moment)].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+            </li>
+          ),
+        )}
       </ol>
-    </div>
+    </section>
   );
 }
 
-function NotesPanel() {
-  const notes = useStore((s) => s.session!.notes);
-  const llm = useStore((s) => s.llm);
-
+/** P1 diagnostics: raw per-frame measurements, collapsed by default. */
+function Diagnostics() {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex max-h-[38%] min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3 text-sm">
-        <span className="font-medium">Interviewer Notes</span>
-        <span className="text-xs text-zinc-500">local LLM · every 30s</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {llm === "unavailable" && (
-          <div className="px-4 py-3 text-sm text-amber-300">
-            Local LLM unavailable. Flags still work. Start Ollama to get notes.
-          </div>
-        )}
-        {notes.length === 0 && llm !== "unavailable" && (
-          <div className="px-4 py-6 text-center text-sm text-zinc-500">Notes appear when there is something to say.</div>
-        )}
-        {[...notes].reverse().map((n) => (
-          <div key={n.id} className="enter enter-blur border-b border-zinc-800/60 px-4 py-3 text-sm last:border-0">
-            <div className="font-mono text-xs text-zinc-500">{formatTime(n.t)}</div>
-            <p className="mt-1 leading-relaxed">{n.text}</p>
-            {n.followUp && <p className="mt-1.5 text-emerald-300">Ask: {n.followUp}</p>}
-          </div>
-        ))}
-      </div>
-    </div>
+    <details className="rounded-xl border border-zinc-800/70 text-sm" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="cursor-pointer select-none rounded-xl px-4 py-2 text-zinc-500 hover:text-zinc-300">Diagnostics</summary>
+      {open && <SignalReadout />}
+    </details>
   );
 }
 
 function SignalReadout() {
   const s = useStore((st) => st.latestSignal);
+  const fps = useStore((st) => st.fps);
   const fmt = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v.toFixed(1)}°`);
   const items: [string, string][] = [
     ["Faces", String(s?.faceCount ?? "—")],
@@ -175,9 +230,10 @@ function SignalReadout() {
     ["Head pitch", fmt(s?.headPitch)],
     ["Gaze X", fmt(s?.gazeX)],
     ["Gaze Y", fmt(s?.gazeY)],
+    ["Frames/s", fps ? fps.toFixed(0) : "—"],
   ];
   return (
-    <div className="grid grid-cols-3 gap-2 text-sm sm:grid-cols-5">
+    <div className="grid grid-cols-3 gap-2 px-4 pb-3 sm:grid-cols-6">
       {items.map(([k, v]) => (
         <div key={k} className="rounded-lg bg-zinc-900 px-3 py-2">
           <div className="text-xs text-zinc-500">{k}</div>

@@ -1,5 +1,6 @@
 import type { FaceLandmarker, FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import type { Signal } from "../domain/types";
+import { VISION } from "../rules/config";
 import { toSignal } from "./signals";
 
 /** Region of the video frame to analyse, normalized 0..1. */
@@ -19,9 +20,24 @@ export interface VisionPipelineOptions {
    * crop region, not the full frame: full-frame x = crop.left + x * (crop.right - crop.left), same for y.
    */
   onFrame: (signal: Signal, result: FaceLandmarkerResult, crop: CropRect | null) => void;
+  /** Sampling cap (§14A.2); defaults to VISION.maxFps. Lightweight mode passes VISION.lightweightMaxFps. */
+  maxFps?: number;
 }
 
-/** Runs FaceLandmarker on every new video frame and emits Signals. */
+/** Frames offered by the video vs frames actually analysed (benchmark / diagnostics). */
+export interface FrameStats {
+  offered: number;
+  analysed: number;
+  /** Skipped by the sampling cap. */
+  skipped: number;
+  /** Detection threw for the frame. */
+  failed: number;
+}
+
+/** Frames arrive with jitter; allow this fraction of the interval so a 30 fps source isn't halved at a 30 fps cap. */
+const CAP_TOLERANCE = 0.9;
+
+/** Runs FaceLandmarker on new video frames (at most maxFps per second) and emits Signals. */
 export class VisionPipeline {
   private readonly opts: VisionPipelineOptions;
   private crop: CropRect | null = null;
@@ -31,9 +47,31 @@ export class VisionPipeline {
   private frameTimes: number[] = [];
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
+  private maxFps: number;
+  private lastAnalysedAt = -Infinity;
+  private counts: FrameStats = { offered: 0, analysed: 0, skipped: 0, failed: 0 };
 
   constructor(opts: VisionPipelineOptions) {
     this.opts = opts;
+    this.maxFps = opts.maxFps ?? VISION.maxFps;
+  }
+
+  /** Change the sampling cap (e.g. lightweight mode). Non-positive or non-finite values mean VISION.maxFps. */
+  setMaxFps(n: number): void {
+    this.maxFps = Number.isFinite(n) && n > 0 ? n : VISION.maxFps;
+  }
+
+  get currentMaxFps(): number {
+    return this.maxFps;
+  }
+
+  /** Cumulative frame counters since start (or the last resetStats). */
+  get stats(): FrameStats {
+    return { ...this.counts };
+  }
+
+  resetStats(): void {
+    this.counts = { offered: 0, analysed: 0, skipped: 0, failed: 0 };
   }
 
   setCrop(crop: CropRect | null): void {
@@ -76,16 +114,25 @@ export class VisionPipeline {
   private process(): void {
     const { video, landmarker, getSessionTime, onFrame } = this.opts;
     if (video.readyState < 2 || !video.videoWidth) return;
-    let ts = performance.now();
+    this.counts.offered++;
+    const now = performance.now();
+    if (now - this.lastAnalysedAt < (1000 / this.maxFps) * CAP_TOLERANCE) {
+      this.counts.skipped++;
+      return;
+    }
+    this.lastAnalysedAt = now;
+    let ts = now;
     if (ts <= this.lastTs) ts = this.lastTs + 0.001;
     this.lastTs = ts;
     const crop = this.crop;
     try {
       const result = landmarker.detectForVideo(crop ? this.drawCrop(crop) : video, ts);
+      this.counts.analysed++;
       this.frameTimes.push(ts);
       if (this.frameTimes.length > 120) this.frameTimes.splice(0, this.frameTimes.length - 120);
       onFrame(toSignal(result, getSessionTime()), result, crop);
     } catch (err) {
+      this.counts.failed++;
       console.warn("Face detection failed for a frame", err);
     }
   }

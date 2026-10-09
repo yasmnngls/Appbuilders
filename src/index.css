@@ -79,3 +79,114 @@ button:focus-visible {
     }
   }
 }
+
+/* Follow-up cards and overlays: ≤200ms fade + 4px rise (M8 design rules). */
+.card-enter {
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+@starting-style {
+  .card-enter {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* "Baseline ready ✓" fades away before the Live Dashboard takes over. */
+.fade-out {
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+/* Re-observation window: a thin line that empties linearly over the remaining time. */
+@keyframes drain {
+  from {
+    transform: scaleX(var(--from, 1));
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+.drain {
+  transform-origin: left;
+  animation: drain linear forwards;
+}
+
+dialog::backdrop {
+  background: rgb(9 9 11 / 0.6);
+}
+dialog:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--color-emerald-400);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @starting-style {
+    .card-enter {
+      transform: none;
+    }
+  }
+  .drain {
+    animation: none;
+    transform: scaleX(var(--from, 1));
+  }
+  .fade-out {
+    transition: none;
+  }
+}
+
+/* M10: browser print-to-PDF for the Session Report (FR-021). */
+@page {
+  size: A4;
+  margin: 16mm;
+  @bottom-right {
+    content: counter(page) " / " counter(pages);
+    font-size: 9pt;
+    color: #555;
+  }
+}
+
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .no-print,
+  header,
+  button {
+    display: none !important;
+  }
+  main {
+    overflow: visible !important;
+  }
+  .print-plain,
+  .print-plain * {
+    background: transparent !important;
+    color: #000 !important;
+    border-color: #bbb !important;
+    box-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+  .print-plain .print-muted {
+    color: #444 !important;
+  }
+  .print-block {
+    break-inside: avoid;
+  }
+  .print-plain h1,
+  .print-plain h2,
+  .print-plain h3 {
+    break-after: avoid;
+  }
+}

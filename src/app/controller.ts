@@ -1,31 +1,46 @@
 import type { FaceLandmarker, FaceLandmarkerResult } from "@mediapipe/tasks-vision";
-import { openWebcam, openWindowCapture, stopStream } from "../capture/source";
-import type { Session } from "../domain/types";
-import { checkOllama, warmUp } from "../llm/ollama";
-import { startNoteLoop } from "../llm/notes";
+import { attachSpeechActivity } from "../audio/speechActivity";
+import { hasAudio, openLocalVideo, openWebcam, openWindowCapture, stopStream } from "../capture/source";
+import { MAX_FOLLOW_UPS, type FollowUpState, type Moment, type Pause, type Session, type SessionTime } from "../domain/types";
+import { fallbackSuggestion, writeSuggestion } from "../llm/moments";
+import { checkOllama, currentModel, isLightweight, lastLatencyMs, onModelChange, warmUp } from "../llm/ollama";
 import { fallbackReport, generateReport } from "../llm/report";
+import { VISION } from "../rules/config";
 import { RuleEngine } from "../rules/engine";
-import {
-  addNote,
-  applyTransitions,
-  endSession,
-  sessionNow,
-  setBaseline,
-  setReport,
-  startSession,
-  store,
-} from "../store/session";
+import { allowedActions, reduceFollowUp, type FollowUpEffect, type FollowUpEvent } from "../rules/followUp";
+import { evaluateGate } from "../rules/gate";
+import * as S from "../store/session";
+import { sessionNow, store } from "../store/session";
 import { createFaceLandmarker } from "../vision/faceTracker";
 import { type CropRect, VisionPipeline } from "../vision/pipeline";
 
-/** Wires capture → vision → rules → store → local LLM. Owns everything that isn't React. */
+/** Wires capture → vision → rules → store → local LLM. Owns every timer, stream and async call; React only calls these. */
+
+const TICK_MS = 250;
+const BASELINE_READY_MS = 1_500;
+const PAUSE_RING_MS = 120_000;
 
 let landmarker: Promise<{ landmarker: FaceLandmarker; delegate: "GPU" | "CPU" }> | null = null;
+let preloaded = false;
+
 let stream: MediaStream | null = null;
+let revokeVideo: (() => void) | null = null;
+let detachSource: (() => void) | null = null;
+
 let pipeline: VisionPipeline | null = null;
 let engine: RuleEngine | null = null;
-let stopNotes: (() => void) | null = null;
 let crop: CropRect | null = null;
+let loop: ReturnType<typeof setInterval> | null = null;
+let stopSpeech: (() => void) | null = null;
+let pauses: Pause[] = [];
+let baselineTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Aborted at Session end: cancels the in-flight and queued suggestions. */
+let llmAbort: AbortController | null = null;
+/** Suggestions run one at a time (one local LLM call at a time, §14A.4). */
+let suggestionQueue: Promise<void> = Promise.resolve();
+let reportAbort: AbortController | null = null;
+let finishing = false;
 
 /** The latest raw landmarker result, read by the overlay each animation frame (kept out of React state). */
 export const live: { result: FaceLandmarkerResult | null; crop: CropRect | null } = { result: null, crop: null };
@@ -37,52 +52,277 @@ if (video) {
   video.className = "h-full w-full object-contain";
 }
 
+const uid = () => Math.random().toString(36).slice(2, 10);
+const isLive = () => {
+  const s = store.get().session;
+  return !!s && s.endedAt === null;
+};
+
+function syncLlm() {
+  S.setLlm({ model: currentModel(), latencyMs: lastLatencyMs(), lightweight: isLightweight() });
+  applyFpsCap();
+}
+
+function applyFpsCap() {
+  pipeline?.setMaxFps(isLightweight() ? VISION.lightweightMaxFps : VISION.maxFps);
+}
+
+// ---------------------------------------------------------------------------
+// Preload, consent, Source preview
+
 export function preload() {
   landmarker ??= createFaceLandmarker();
   landmarker
     .then(({ delegate }) => store.set({ vision: { status: "ready", delegate } }))
     .catch((e) => store.set({ vision: { status: "error", message: String(e) } }));
+  if (preloaded) return;
+  preloaded = true;
   checkOllama().then((ok) => {
-    store.set({ llm: ok ? "ready" : "unavailable" });
+    S.setLlm({ status: ok ? "ready" : "unavailable", model: currentModel() });
     if (ok) warmUp().catch(() => {});
   });
+  onModelChange(() => syncLlm());
   const syncOnline = () => store.set({ online: navigator.onLine });
   window.addEventListener("online", syncOnline);
   window.addEventListener("offline", syncOnline);
 }
 
-export async function begin(input: { candidateName: string; source: Session["source"] }) {
-  const { landmarker: lm } = await (landmarker ??= createFaceLandmarker());
-  stream = input.source === "webcam" ? await openWebcam() : await openWindowCapture();
-  stream.getVideoTracks()[0]?.addEventListener("ended", () => void finish());
-  video.srcObject = stream;
-  await video.play();
+export function confirmConsent(candidateName: string) {
+  S.confirmConsent(candidateName);
+}
 
-  startSession({ ...input, consentAt: Date.now() });
+/** Screen 2: opens a Source and shows it in the shared <video>. Replaces any previously open Source. */
+export async function openSource(kind: Session["source"], file?: File): Promise<void> {
+  closeSource();
+  const onEnded = () => {
+    if (isLive()) void finish();
+    else closeSource();
+  };
+  if (kind === "video") {
+    if (!file) throw new Error("Choose a video file first.");
+    video.srcObject = null;
+    video.loop = false;
+    const opened = await openLocalVideo(video, file);
+    stream = opened.stream;
+    revokeVideo = opened.revoke;
+    video.addEventListener("ended", onEnded);
+    detachSource = () => video.removeEventListener("ended", onEnded);
+  } else {
+    const s = kind === "webcam" ? await openWebcam() : await openWindowCapture();
+    stream = s;
+    const track = s.getVideoTracks()[0];
+    track?.addEventListener("ended", onEnded);
+    detachSource = () => track?.removeEventListener("ended", onEnded);
+    video.srcObject = s;
+  }
+  await video.play().catch(() => {});
+  S.setSourceReady({ kind, hasAudio: hasAudio(stream) });
+}
+
+/** Back/cancel on Screen 2, and part of finish(): stops the stream and releases the file. */
+export function closeSource() {
+  detachSource?.();
+  detachSource = null;
+  stopStream(stream);
+  stream = null;
+  video.pause();
+  video.srcObject = null;
+  if (revokeVideo) {
+    video.removeAttribute("src");
+    video.load();
+    revokeVideo();
+    revokeVideo = null;
+  }
+  if (store.get().sourceReady) S.setSourceReady(null);
+}
+
+// ---------------------------------------------------------------------------
+// Session start: Session + pipeline + speech + gate loop
+
+export function startBaseline() {
+  const ready = store.get().sourceReady;
+  if (!ready || isLive()) return;
+  finishing = false;
+  pauses = [];
+  llmAbort = new AbortController();
+  suggestionQueue = Promise.resolve();
+
+  // Speech context (FR-005A): null = no audio track → stricter visual-only thresholds.
+  const startT = Date.now();
+  stopSpeech = stream ? attachSpeechActivity(stream, () => (store.get().session ? sessionNow() : Date.now() - startT), onSpeech) : null;
+  S.startSession({ source: ready.kind, speechAvailable: stopSpeech !== null, llmModel: currentModel() });
+  S.setSpeech(stopSpeech ? "pause" : "unavailable");
+
   engine = new RuleEngine();
   crop = null;
   live.crop = null;
-  pipeline = new VisionPipeline({
-    video,
-    landmarker: lm,
-    getSessionTime: sessionNow,
-    onFrame: (signal, result) => {
-      live.result = result;
-      const e = engine!;
-      applyTransitions(e.push(signal));
-      const s = store.get().session;
-      if (s && !s.baseline && e.currentBaseline) setBaseline(e.currentBaseline);
-      store.set({ latestSignal: signal, fps: pipeline?.fps ?? 0, baselineProgress: e.baselineProgress });
-    },
-  });
-  pipeline.start();
+  loop = setInterval(tick, TICK_MS);
 
-  stopNotes = startNoteLoop({
-    getSession: () => store.get().session,
-    now: sessionNow,
-    onNote: (n) => addNote(n),
-    onStatus: (llm) => store.set({ llm }),
+  const session = store.get().session;
+  void (landmarker ??= createFaceLandmarker()).then(({ landmarker: lm }) => {
+    if (!isLive() || pipeline || store.get().session?.startedAt !== session?.startedAt) return;
+    pipeline = new VisionPipeline({
+      video,
+      landmarker: lm,
+      getSessionTime: sessionNow,
+      onFrame: (signal, result) => {
+        live.result = result;
+        const e = engine;
+        if (!e) return;
+        S.applyTransitions(e.push(signal));
+        const s = store.get().session;
+        if (s && !s.baseline && e.currentBaseline) {
+          S.setBaseline(e.currentBaseline);
+          store.set({ baselineJustCompleted: true });
+          if (baselineTimer) clearTimeout(baselineTimer);
+          baselineTimer = setTimeout(() => store.set({ baselineJustCompleted: false }), BASELINE_READY_MS);
+        }
+        store.set({ latestSignal: signal, fps: pipeline?.fps ?? 0, baselineProgress: e.baselineProgress });
+      },
+    });
+    pipeline.setCrop(crop);
+    applyFpsCap();
+    pipeline.start();
+  }).catch((e) => store.set({ vision: { status: "error", message: String(e) } }));
+}
+
+/** Speech transitions → status + the pauses ring (last 120 s, open pause last). */
+function onSpeech(state: "speaking" | "pause", t: SessionTime) {
+  if (state === "pause") {
+    pauses = [...pauses.filter((p) => p.end !== null), { start: t, end: null }];
+  } else {
+    pauses = pauses.map((p) => (p.end === null ? { ...p, end: Math.max(p.start, t) } : p));
+  }
+  const cutoff = t - PAUSE_RING_MS;
+  pauses = pauses.filter((p) => p.end === null || p.end >= cutoff);
+  S.setSpeech(state);
+}
+
+/** Every 250 ms (setInterval keeps running in background tabs). */
+function tick() {
+  const s = store.get().session;
+  if (!s || s.endedAt !== null) return;
+  const now = sessionNow();
+  dispatch({ type: "tick", t: now });
+
+  const s2 = store.get().session!;
+  const fu = s2.followUp;
+  if (fu.phase !== "observing" && fu.phase !== "re_observing") return;
+  const hit = evaluateGate({
+    now,
+    question: S.currentQuestion(s2),
+    followUp: fu,
+    flags: s2.flags,
+    baselineReady: !!s2.baseline,
+    speech: { available: s2.speechAvailable, pauses },
   });
+  if (hit) dispatch({ type: "gate_hit", hit, momentId: uid(), t: now });
+}
+
+/** Runs one event through the follow-up reducer and applies its effects. */
+function dispatch(e: FollowUpEvent) {
+  const s = store.get().session;
+  if (!s || s.endedAt !== null) return;
+  const { state, effects } = reduceFollowUp(s.followUp, e);
+  if (state === s.followUp && effects.length === 0) return;
+  if (import.meta.env?.DEV) checkInvariants(state, e);
+
+  for (const fx of effects) {
+    if (fx.type === "open_moment") {
+      const m = momentSkeleton(fx, state, e.t, s);
+      if (m) {
+        S.openMoment(m);
+        requestSuggestion(m.id);
+      }
+    }
+  }
+  S.applyFollowUp(state, effects);
+}
+
+function momentSkeleton(fx: Extract<FollowUpEffect, { type: "open_moment" }>, fu: FollowUpState, t: SessionTime, s: Session): Moment | null {
+  const flag = fx.flagId ? s.flags.find((f) => f.id === fx.flagId) : undefined;
+  const kind = fx.hit?.kind ?? flag?.kind;
+  if (!kind) return null;
+  return {
+    id: fx.momentId,
+    questionId: fu.questionId,
+    t,
+    kind,
+    origin: fx.hit ? "gate" : "interviewer",
+    reason: fx.hit?.reason ?? "Opened by the Interviewer from a Flag",
+    flagIds: fx.hit?.flagIds ?? (fx.flagId ? [fx.flagId] : []),
+    followUpNumber: fx.followUpNumber,
+    note: null,
+    followUp: null,
+    quality: null,
+    suggestion: "generating",
+    decision: "pending",
+    askedAt: null,
+    result: null,
+  };
+}
+
+/**
+ * Queues one suggestion. One call in flight at a time; aborted at Session end.
+ * The Moment is always updated when text arrives, even if the Interviewer already acted or moved on.
+ */
+function requestSuggestion(momentId: string) {
+  const signal = llmAbort?.signal;
+  suggestionQueue = suggestionQueue.then(async () => {
+    const s = store.get().session;
+    const m = s?.moments.find((x) => x.id === momentId);
+    if (!s || !m) return;
+    S.setLlm({ status: store.get().llm === "unavailable" ? "unavailable" : "busy" });
+    let sug;
+    try {
+      sug = signal?.aborted ? fallbackSuggestion(s, m) : await writeSuggestion(s, m, signal);
+    } catch {
+      sug = fallbackSuggestion(s, m);
+    }
+    S.updateMoment(momentId, { note: sug.note, followUp: sug.followUp, quality: sug.quality, suggestion: sug.source });
+    if (store.get().llm === "busy") S.setLlm({ status: "ready" });
+    syncLlm();
+  });
+}
+
+const TERMINAL = new Set<FollowUpState["phase"]>(["settled", "limit_reached", "dismissed"]);
+
+/** Dev-only: M2.3 invariants after each reduce. */
+function checkInvariants(fu: FollowUpState, e: FollowUpEvent) {
+  const problems: string[] = [];
+  if (fu.used < 0 || fu.used > MAX_FOLLOW_UPS) problems.push(`used=${fu.used}`);
+  const needsMoment = fu.phase === "worth_exploring" || fu.phase === "persisting";
+  if (needsMoment !== (fu.momentId !== null)) problems.push(`momentId=${fu.momentId} in ${fu.phase}`);
+  if ((fu.phase === "re_observing") !== (fu.reObserveUntil !== null)) problems.push(`reObserveUntil=${fu.reObserveUntil} in ${fu.phase}`);
+  const prev = store.get().session?.followUp;
+  if (prev && TERMINAL.has(prev.phase) && e.type !== "question_started" && prev.phase !== fu.phase) problems.push(`left terminal ${prev.phase} on ${e.type}`);
+  if (problems.length) console.error("Follow-up invariant failed:", problems.join("; "), { event: e, state: fu });
+}
+
+// ---------------------------------------------------------------------------
+// Interviewer actions
+
+export function newQuestion(label?: string) {
+  const q = S.nextQuestion(label);
+  if (q) dispatch({ type: "question_started", questionId: q.id, t: q.start, label: `Q${q.number} ${q.label}` });
+}
+
+export function followUpAction(a: "ask" | "continue" | "dismiss") {
+  const s = store.get().session;
+  if (!s || !allowedActions(s.followUp).includes(a)) return;
+  dispatch({ type: a, t: sessionNow() });
+}
+
+/** Flag Details → Explore: opens a Moment from this Flag (origin "interviewer"). */
+export function exploreFlag(flagId: string) {
+  S.setOpenFlag(null);
+  dispatch({ type: "explore", flagId, momentId: uid(), t: sessionNow() });
+}
+
+/** Flag Details → Dismiss: the Flag no longer counts toward the evidence gate. */
+export function dismissFlag(flagId: string) {
+  S.dismissFlag(flagId);
+  S.setOpenFlag(null);
 }
 
 export function setCrop(next: CropRect | null) {
@@ -92,34 +332,55 @@ export function setCrop(next: CropRect | null) {
   resetBaseline();
 }
 
+/** Ongoing Flags end; the gate can't fire until the Baseline is learned again. */
 export function resetBaseline() {
   if (!engine) return;
-  applyTransitions(engine.resetBaseline(sessionNow()));
-  setBaseline(null);
+  S.applyTransitions(engine.resetBaseline(sessionNow()));
+  S.setBaseline(null);
+  store.set({ baselineJustCompleted: false, baselineProgress: 0 });
 }
 
-/** Stops capture and analysis, then writes the Session Report (local LLM, deterministic fallback). */
-export async function finish() {
-  if (!pipeline) return;
-  pipeline.stop();
+/** Stops everything (LLM, loop, pipeline, speech, stream), then writes the Session Report (local LLM, fallback). */
+export async function finish(): Promise<void> {
+  if (finishing) return;
+  if (!isLive()) {
+    closeSource();
+    return;
+  }
+  finishing = true;
+  llmAbort?.abort();
+  llmAbort = null;
+  if (loop) clearInterval(loop);
+  loop = null;
+  if (baselineTimer) clearTimeout(baselineTimer);
+  baselineTimer = null;
+  pipeline?.stop();
   pipeline = null;
-  stopNotes?.();
-  stopNotes = null;
-  stopStream(stream);
-  stream = null;
-  video.srcObject = null;
+  engine = null;
+  stopSpeech?.();
+  stopSpeech = null;
+  closeSource();
   live.result = null;
-  endSession();
+  S.endSession();
+  store.set({ baselineJustCompleted: false });
 
   const session = store.get().session;
+  finishing = false;
   if (!session) return;
   store.set({ reportStatus: "generating" });
+  reportAbort = new AbortController();
+  const mine = reportAbort;
   try {
-    setReport(await generateReport(session));
+    const report = await generateReport(session, mine.signal);
+    if (store.get().session?.startedAt !== session.startedAt) return;
+    S.setReport(report);
     store.set({ reportStatus: "done" });
   } catch {
-    setReport(fallbackReport(session));
+    if (store.get().session?.startedAt !== session.startedAt) return;
+    S.setReport(fallbackReport(session));
     store.set({ reportStatus: "fallback" });
+  } finally {
+    if (reportAbort === mine) reportAbort = null;
   }
 }
 

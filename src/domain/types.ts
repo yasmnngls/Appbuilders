@@ -127,6 +127,8 @@ export interface FollowUpState {
   reObserveUntil: SessionTime | null;
   /** The Moment currently shown to the Interviewer, if any. */
   momentId: string | null;
+  /** The Moment whose follow-up is being re-observed; receives the settled/persisting result. */
+  askedMomentId: string | null;
   /** Flags that started before this time no longer count toward the evidence gate. */
   watchFrom: SessionTime;
 }

@@ -56,3 +56,14 @@ export const RULES = {
     reObserveMs: 30_000,
   },
 } as const;
+
+/** Vision sampling caps (PRD §14A.2, §14A.5). The pipeline skips frames closer together than 1000 / maxFps ms. */
+export const VISION = {
+  maxFps: 30,
+  /**
+   * Lightweight mode cap. 10 fps leaves only ~3 samples inside a reading return (returnMaxMs 350 ms);
+   * synthetic reading still hit 8/8 at 10 and 15 fps (engine.test.ts "sampling rates"), but real tracking is
+   * noisier, so the cap stays at 15 fps for margin.
+   */
+  lightweightMaxFps: 15,
+} as const;

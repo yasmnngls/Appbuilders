@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FlagKind } from "../domain/types";
+import type { FlagKind, Signal } from "../domain/types";
 import { RuleEngine } from "./engine";
 import { run, SignalBuilder, type TimedTransition } from "./testing/synthetic";
 
@@ -94,15 +94,15 @@ describe("off-screen", () => {
       ["off-screen", "end"],
     ]);
     expect(Math.abs(trs[0].t - onset)).toBeLessThan(200);
-    expect(trs[0].detail).toBe("looking to the side");
+    expect(trs[0].detail).toBe("gaze moved to the right");
     expect(Math.abs(trs[1].t - back)).toBeLessThan(250);
   });
 
   it("works for gaze held up and in the opposite direction", () => {
     for (const [x, y, detail] of [
-      [-20, 0, "looking to the side"],
-      [0, 20, "looking up"],
-      [0, -20, "looking down"],
+      [-20, 0, "gaze moved to the left"],
+      [0, 20, "gaze moved up"],
+      [0, -20, "gaze moved down"],
     ] as const) {
       const b = afterBaseline(13);
       b.move(x, y, 80).hold(3_000).move(0, 0, 80).steady(3_000);
@@ -253,7 +253,8 @@ describe("baseline gating and reset", () => {
     expect(before.map((t) => [t.kind, t.state])).toEqual([["off-screen", "start"]]);
     const resetAt = b.t;
     const ended = engine.resetBaseline(resetAt);
-    expect(ended).toEqual([{ kind: "off-screen", state: "end", t: resetAt }]);
+    expect(ended).toMatchObject([{ kind: "off-screen", state: "end", t: resetAt }]);
+    expect(ended[0].evidence?.peakDeviationDeg).toBeGreaterThan(10);
     expect(engine.currentBaseline).toBeNull();
     expect(engine.baselineProgress).toBe(0);
 
@@ -299,5 +300,85 @@ describe("pairing", () => {
     expectWellFormed(trs, true);
     const kinds = new Set(trs.map((t) => t.kind));
     expect(kinds).toEqual(new Set(["off-screen", "reading-pattern", "face-missing", "second-face"]));
+  });
+});
+
+describe("Flag evidence (FR-009)", () => {
+  it("off-screen carries baseline, threshold and direction on start, and a peak >= threshold on end", () => {
+    const b = afterBaseline(51);
+    b.move(20, 0, 80).hold(3_000).move(0, 0, 80).steady(3_000);
+    const trs = of(run(b.frames), "off-screen");
+    expect(trs.map((t) => t.state)).toEqual(["start", "end"]);
+    const ev = trs[0].evidence!;
+    expect(ev.baseline).toBeDefined();
+    expect(ev.thresholdDeg!.x).toBeGreaterThanOrEqual(10);
+    expect(ev.thresholdDeg!.y).toBeGreaterThanOrEqual(10);
+    expect(ev.direction).toBe("right");
+    const peak = trs[1].evidence!.peakDeviationDeg!;
+    expect(peak).toBeGreaterThanOrEqual(Math.min(ev.thresholdDeg!.x, ev.thresholdDeg!.y));
+    expect(peak).toBeGreaterThan(17);
+  });
+
+  it("second face carries faceCount 2", () => {
+    const b = afterBaseline(52);
+    b.faces(2, 2_000).steady(3_000);
+    const start = run(b.frames).find((t) => t.kind === "second-face" && t.state === "start")!;
+    expect(start.evidence).toEqual({ faceCount: 2 });
+  });
+
+  it("reading carries cycles >= 4", () => {
+    const b = afterBaseline(53).setNoise(0.7);
+    b.read(6, { startX: -6 }).setNoise(1).steady(8_000);
+    const start = run(b.frames).find((t) => t.kind === "reading-pattern" && t.state === "start")!;
+    expect(start.evidence!.cycles).toBeGreaterThanOrEqual(4);
+    expect(start.evidence!.baseline).toBeDefined();
+  });
+});
+
+/** Emulates the pipeline's sampling cap: keep frames at least 1000 / fps ms apart. */
+function subsample(frames: Signal[], fps: number): Signal[] {
+  const minGap = 1000 / fps - 1;
+  const out: Signal[] = [];
+  let last = -Infinity;
+  for (const f of frames) {
+    if (f.t - last >= minGap) {
+      out.push(f);
+      last = f.t;
+    }
+  }
+  return out;
+}
+
+describe("sampling rates (VISION caps)", () => {
+  it.each([10, 15, 30])("off-screen hold of 3s is flagged at %i fps", (fps) => {
+    const b = afterBaseline(61);
+    b.move(20, 0, 80).hold(3_000).move(0, 0, 80).steady(3_000);
+    const trs = of(run(subsample(b.frames, fps)), "off-screen");
+    expect(trs.map((t) => t.state)).toEqual(["start", "end"]);
+  });
+
+  it.each([10, 15, 30])("conversation stays quiet at %i fps", (fps) => {
+    for (let seed = 1; seed <= 5; seed++) {
+      const b = afterBaseline(seed).conversation(120_000);
+      const trs = run(subsample(b.frames, fps));
+      expect(of(trs, "off-screen")).toEqual([]);
+      expect(of(trs, "reading-pattern")).toEqual([]);
+    }
+  });
+
+  it.each([
+    // Measured 8/8 at every rate with 0.7 deg noise.
+    [30, 8],
+    [15, 8],
+    [10, 6],
+  ])("reading hit rate at %i fps (documented, >= %i / 8)", (fps, minHits) => {
+    let hits = 0;
+    for (let seed = 1; seed <= 8; seed++) {
+      const b = afterBaseline(seed).setNoise(0.7);
+      b.read(6, { dir: 1, startX: -6 }).setNoise(1).steady(10_000);
+      if (of(run(subsample(b.frames, fps)), "reading-pattern").length > 0) hits++;
+    }
+    console.log(`reading detected at ${fps} fps in ${hits}/8 runs`);
+    expect(hits).toBeGreaterThanOrEqual(minHits);
   });
 });
