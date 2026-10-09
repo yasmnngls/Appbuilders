@@ -132,7 +132,7 @@ const REPORT_SYSTEM = `You help a job interviewer review an interview after it e
 Write JSON with:
 - "summary": 2-3 sentences describing the overall pattern of observations across the interview, naming question numbers (Q1, Q2...) and what happened after any follow-up.
 - "perQuestion": one entry for EVERY question listed, with "questionNumber" and "observation": one or two short factual sentences about what was observed in that question and the result, or that nothing was observed.
-Use observation words only: "observed", "pattern", "gaze moved", "face out of view", "second face", "reading-like pattern", "settled", "continued". Describe facts only: never describe attention, engagement or state of mind, and never give reasons, opinions, scores or hiring advice. Do not write new follow-up questions.`;
+Use observation words only: "observed", "pattern", "gaze moved", "face out of view", "second face", "reading-like pattern", "settled", "continued". Describe facts only: never describe the Candidate's state of mind or feelings, and never give reasons, opinions, scores or hiring advice. Do not write new follow-up questions.`;
 
 const REPORT_SCHEMA = {
   type: "object",

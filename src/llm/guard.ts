@@ -3,7 +3,10 @@ import type { ContractInput, ContractOutput } from "./contract";
 /** PRD §18.1 + §28 list. Matched as whole words, case-insensitive, with simple stems. */
 export const BANNED = ["cheat", "cheating", "lie", "lying", "lied", "liar", "suspicious", "suspicion",
   "uncomfortable", "discomfort", "dishonest", "dishonesty", "deception", "deceptive", "deceive",
-  "violation", "risk", "integrity", "nervous", "anxious"] as const;
+  "violation", "risk", "integrity", "nervous", "anxious",
+  // State-of-mind words: the report describes what was observed, never attention or feelings (PRD §18.6).
+  "engaged", "disengaged", "engagement", "attention", "inattention", "attentive", "inattentive",
+  "distracted", "focused", "unfocused", "confident", "unconfident"] as const;
 /** Follow-ups must not point at the observation itself (FR-012). */
 export const OBSERVATION_WORDS = ["look", "looking", "looked", "eye", "eyes", "gaze", "screen", "camera",
   "reading", "read", "notes", "someone", "anyone", "else in the room"] as const;
