@@ -1938,23 +1938,26 @@ This appendix records where the repository stands against this PRD. The PRD body
 ## Built
 
 - Consent (Interviewer confirmation) — FR-001
-- Source: Online Interview / Assessment Window and Local Webcam — FR-002
+- Source: Online Interview / Assessment Window, Local Webcam, and Local Video (P1, shown as Preview) — FR-002
 - Local vision Signals via MediaPipe Face Landmarker in the browser (GPU, CPU fallback) — FR-003
 - Automatic Baseline (first ~15 s) — FR-004
-- Temporal Flag rules for the four Flag types — FR-005 (visual part), FR-006
+- Temporal Flag rules for the four Flag types, with Local Speech Activity Context (energy only; stricter thresholds when no audio track) — FR-005, FR-005A, FR-006
 - Question marker (N key / Next question) — FR-007
-- Live dashboard (video, current Question, Flags, local status) — FR-008
-- Session Report with Markdown / JSON export — FR-020 (partial)
+- Live dashboard (video, current Question, Flags, local status, diagnostics panel) — FR-008
+- Explainable Flag: Flag Details with Baseline vs observed, Explore and Dismiss — FR-009
+- Adaptive Follow-Up Loop: Moment worth exploring (evidence gate), Ask / Continue / Dismiss, Follow-up counter (max 2), Re-observation, Stop condition, Session Timeline — FR-010, FR-014 – FR-018
+- Event-driven Interviewer Note and neutral follow-up under the §28 contract, with local quality guard, one retry and deterministic fallback — FR-011 – FR-013
+- Question Journey in the Session Report — FR-019
+- Session Report with Markdown / JSON export — FR-020
+- PDF export via the browser's print-to-PDF — FR-021
+- Hardware-aware model selection (first installed of `qwen3:4b` → `qwen3:1.7b` → `qwen2.5:3b`) with step-down to a lighter model and a lower vision fps cap in lightweight mode — §14A.4, §14A.5
+- Local LLM benchmark script (`npm run bench:llm`) and measured results in [BENCHMARK.md](./BENCHMARK.md) — §14A.6 (LLM rows)
 
 ## Not yet built
 
-- Adaptive Follow-Up Loop: Moment worth exploring, Ask / Continue / Dismiss, Follow-up counter, Re-observation, Stop condition, Session Timeline — FR-010, FR-012, FR-014 – FR-018
-- Event-driven Interviewer Note under the §28 contract (the current code writes a Note every 30 s) — FR-011
-- Local Speech Activity Context — FR-005A
-- Explainable Flag detail view — FR-009
-- PDF export — FR-021
-- Hardware-aware model selection and reference-hardware benchmark — §14A
-- Local Video Source (P1)
+- Remaining §14A.6 benchmark rows (vision-only fps/CPU/GPU, vision + dashboard, full pipeline pattern → follow-up latency, offline pass/fail) — pending a manual run in the browser; see [BENCHMARK.md](./BENCHMARK.md)
+- "Copy diagnostics" to clipboard from the diagnostics panel (BUILD_PLAN M11.2)
+- Benchmark on a second, lower-spec machine (§14A.6)
 
 ## Tested configuration so far
 

@@ -1,72 +1,178 @@
 # Gazewise
 
-**On-device interview observations.** Gazewise watches a remote job candidate's face during a video interview and tells the interviewer, in real time, when the candidate looks off-screen for a while, shows a **reading pattern** (eyes sweeping along lines of text, as when reading answers off a second screen), leaves the frame, or has a second person in view. A local language model turns those observations into short **Interviewer Notes** with follow-up questions, plus an end-of-interview report.
+**Notice. Follow up. Know when to move on.**
 
-All of it runs on the interviewer's laptop. No video, images or face data leave the device, and nothing is saved unless the interviewer exports a text report.
+Gazewise is a local-AI interview assistant. During a remote job interview it watches the Candidate's video on the Interviewer's own laptop, notices when a gaze or face pattern is worth a closer look (a reading-like gaze pattern, gaze outside the usual range, the face out of view, a second face in view), and suggests one neutral follow-up question about the topic being discussed. After the follow-up it watches again and tells the Interviewer whether the pattern settled, so they can move on.
+
+All analysis runs on the Interviewer's laptop. No video, images or face data leave the device, and nothing is saved unless the Interviewer exports a report.
 
 Built for the AppBuildersPH Hackathon 2026 (theme: Local AI).
 
-## Why does this product benefit from running AI locally?
+## Who it's for
 
-- **Privacy is the product.** Face and eye data is sensitive personal information under the Philippine Data Privacy Act. A cloud proctoring tool has to stream a candidate's face to a third party. Gazewise analyzes each frame in memory on the interviewer's laptop and throws it away, so there is no upload, no stored footage and nothing for a vendor to leak.
-- **Real time without bandwidth.** Gaze analysis needs every frame (about 30 per second). Sending that to a cloud API for a 45-minute interview costs bandwidth, adds latency and costs money per call. On-device, it's free and immediate.
-- **Works with the internet off.** Webcam mode needs no network at all. Face tracking, the rules and the language model all keep running with Wi-Fi disabled.
+Hiring managers, technical interviewers and recruiters who run remote interviews on Google Meet, Zoom, Teams or an assessment platform and want help knowing **when a follow-up question is worth asking**. Gazewise supports the Interviewer's judgement; it does not score or judge the Candidate.
 
-## How it works
+## The loop
 
 ```
-Meeting window (getDisplayMedia) or webcam (getUserMedia)
-  → MediaPipe Face Landmarker, in the browser on the GPU (478 face + iris landmarks, head pose)
-  → Signals: face count, head yaw/pitch, iris offset, gaze estimate
-  → Rules (plain TypeScript, unit-tested): Baseline, Looking off-screen, Reading pattern, Face missing, Second face
-  → Flags, grouped by interview Question
-  → Ollama + qwen2.5:3b on localhost: Interviewer Notes every 30 s, end-of-session report (JSON-schema output)
+Observe → Explore → Re-observe → Resolve → Move On
 ```
 
-The rules detect; the language model only writes. Flags are **observations, not verdicts**: the app never says "cheating".
+1. **Observe** — after a ~15 s Baseline of the Candidate's normal gaze, local rules raise Flags (observations, not verdicts).
+2. **Explore** — when the evidence gate decides a pattern is a *Moment worth exploring*, the local LLM writes a short factual Interviewer Note and one neutral follow-up about the Question's topic.
+3. **Re-observe** — after the Interviewer asks it, Gazewise watches the answer.
+4. **Resolve** — the pattern either settles ("Observation settled ✓") or continues; at most 2 follow-ups per Question.
+5. **Move On** — the Interviewer goes to the next Question (press **N**). The Session Report records each Question's journey.
 
-## Run it
+The rules detect; the language model only writes. A Flag is a prompt for a follow-up, never a conclusion.
 
-Requirements: Node 20+, [Ollama](https://ollama.com), a Chromium-based browser (Chrome or Edge).
+## Requirements
+
+- Node.js 20+
+- Chrome or Edge (Chromium; uses `getDisplayMedia`, WebGL/WebGPU for MediaPipe)
+- [Ollama](https://ollama.com) running locally
+
+## Setup
 
 ```bash
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:3b       # the model used on the tested laptop
+# optional: ollama pull qwen3:4b  /  ollama pull qwen3:1.7b
 npm install
-npm run dev          # http://localhost:5173
+npm run dev                  # http://localhost:5173
 ```
 
-The MediaPipe WASM runtime and face model are committed under `public/` so the app loads with no network. `npm run assets` re-fetches them if needed.
+The app picks the first installed model from `qwen3:4b` → `qwen3:1.7b` → `qwen2.5:3b`. If a call is slow (over 8 s) or times out, it steps down to the next lighter installed model for the rest of the Session (lightweight mode). If no model is available, it uses deterministic template suggestions so the loop still works.
 
-1. Enter the candidate's name, pick **Meeting window** or **This laptop's webcam**, read the consent script to the candidate and tick the box.
-2. In window mode, choose the Meet/Zoom window, then **Select candidate tile** and drag a box around the candidate's video.
-3. The first ~15 s learns the candidate's normal gaze. Press **N** (or "Next question") each time you ask a new question.
-4. **End session** to get the report; export it as Markdown or JSON.
+The MediaPipe WASM runtime and Face Landmarker model are committed under `public/`, so the app loads with no network. `npm run assets` re-fetches them if needed.
 
-Tests: `npm test`.
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server on http://localhost:5173 (Ollama proxied at `/ollama`) |
+| `npm run build` / `npm run preview` | Type-check, production build, serve the build (also proxies Ollama) |
+| `npm test` | Unit tests (vitest) |
+| `npm run typecheck` | TypeScript only |
+| `npm run assets` | Re-download the vendored MediaPipe files into `public/` |
+| `npm run bench:llm` | Local LLM benchmark (see [docs/BENCHMARK.md](docs/BENCHMARK.md)) |
+| `npm run landing:dev` / `npm run landing:build` | Landing site in `landing/` |
 
-## What runs locally / what needs internet
+### Using it
+
+1. Enter the Candidate's name and confirm consent (no camera is opened before this).
+2. Choose a Source: **Online Interview / Assessment Window** (pick the Meet/Zoom/Teams window, then drag a box around the Candidate's tile), **Local Webcam**, or **Local Video** (a recorded file on this laptop; preview).
+3. Let the Baseline finish (~15 s). Press **N** (or "Next question") for each new Question and type a short label.
+4. When a Follow-up card appears: **Ask** it, **Continue**, or **Dismiss**. Click any Flag for Flag Details (Baseline vs observed).
+5. **End session** for the Session Report; export PDF (browser print), Markdown or JSON.
+
+## Landing site
+
+A separate static site lives in `landing/` (its own `package.json`; it imports nothing from `src/`).
+
+```bash
+npm --prefix landing install
+npm run landing:dev
+npm run landing:build        # output in landing/dist
+```
+
+Deploy by importing the repo into Vercel with **Root Directory = `landing`** (framework preset Vite, build `npm run build`, output `dist`).
+
+## Why local AI
+
+- **Privacy is the product.** Face and eye data is sensitive personal information under the Philippine Data Privacy Act. Gazewise analyses each frame in memory on the Interviewer's laptop and discards it: no upload, no stored footage, nothing for a vendor to hold.
+- **Real time without bandwidth.** Gaze analysis needs many frames per second. Sending them to a cloud API for a 45-minute interview would cost bandwidth, latency and money per call. On-device it is immediate and free.
+- **The AI keeps working offline.** Vision, rules, the follow-up loop and the language model all run on localhost, so the analysis layer continues with the internet off.
+
+## What runs locally
 
 | Component | Where it runs |
 |---|---|
 | Face and iris tracking (MediaPipe Face Landmarker) | Locally, in the browser (GPU, CPU fallback) |
-| Rules that raise Flags | Locally, in the browser |
-| Interviewer Notes and report (qwen2.5:3b via Ollama) | Locally, on localhost |
-| The video call itself (Meet/Zoom) | Internet, only in meeting-window mode. Webcam mode needs no internet. |
+| Speech activity (energy only, no transcription) | Locally, in the browser (Web Audio) |
+| Baseline, Flag rules, evidence gate, follow-up state machine | Locally, in the browser (plain TypeScript) |
+| Interviewer Notes, follow-ups, Session Report text | Locally, Ollama on `127.0.0.1:11434` via the dev-server proxy |
+| Report export (PDF / Markdown / JSON) | Locally, in the browser |
+| The video call itself (Meet / Zoom / Teams) | The interview platform, over the internet. Local Webcam and Local Video need no internet |
+
+## Privacy
+
+- Nothing is stored until the Interviewer exports a report. Closing the tab discards the Session.
+- No images: frames are analysed in memory and dropped; exports contain text only (Flags, Notes, follow-ups, timeline).
+- Audio is reduced to a loudness level to tell speaking from pauses. It is never recorded, transcribed or played back.
+- The model receives only Flag descriptions, the Question label and the gate reason — never video, images or landmarks.
+
+## Source audio
+
+Speech activity tells the gate whether the Candidate is talking or pausing (thinking pauses are not flagged). What audio is available depends on the Source:
+
+| Source | Audio | Notes |
+|---|---|---|
+| Local Webcam | Mic (echo cancellation + noise suppression) | Picks up both people in the room. That's acceptable: the gate only needs to know whether someone is talking, not who |
+| Meeting window | Usually **none**. Chrome only shares audio for tabs, or for the whole screen on Windows with "Share system audio" | When there's no track → `unavailable` → stricter thresholds. Shown in the status bar |
+| Local Video | From the file, tapped with `createMediaElementSource` into a `MediaStreamDestination` | Never connected to the speakers, so there is no playback |
+
+## Offline test
+
+> **"The interview platform may use the internet. Our AI analysis layer does not need the cloud."**
+
+We do not claim Meet, Zoom or Teams keep working without the internet. The offline test shows that the **local AI layer** keeps working.
+
+Before the event:
+
+1. `ollama pull qwen2.5:3b` (and any Qwen3 model you want), then `npm install`.
+2. Check `public/` holds the MediaPipe WASM files and `face_landmarker.task` (no CDN at runtime).
+3. `npm run build && npm run preview`, open the app once while online.
+
+Offline run (PRD §20):
+
+1. Start Gazewise while connected.
+2. Choose **Local Webcam** or **Local Video** as the Source.
+3. Let the Baseline finish.
+4. Turn Wi-Fi off (or disable the network adapter). The status bar shows Offline.
+5. Keep observing locally.
+6. Trigger a known Flag (e.g. read a paragraph from a second window for ~10 s).
+7. A local Interviewer Note appears.
+8. A neutral follow-up appears.
+9. Ask it; Gazewise re-observes.
+10. Show "Observation settled ✓" (or the pattern continuing), then move on and End session; export the PDF with Wi-Fi still off.
+
+Checklist: in DevTools → Network, only `localhost` requests appear. Measured results go in [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+## What it does not do
+
+To keep the product honest, these are explicitly out of scope:
+
+- It does not decide whether a Candidate is cheating, lying or dishonest, and never uses those words in its output.
+- It does not detect deception, emotion, nervousness or personality, and does not score a "risk" or integrity level.
+- It does not record, store or upload video, images or audio.
+- It does not reject or rank Candidates. The Interviewer decides.
+
+## Limits
+
+- Webcam gaze estimates are approximate; gaze is judged relative to each Candidate's own Baseline, not as screen coordinates.
+- The reading-like pattern rule looks for a repeated sweep-and-return rhythm. Someone can read without it, and natural eye movement can resemble it, which is why every Moment leads to a follow-up question rather than a conclusion.
+- In meeting-window mode the face is smaller and compressed and there is usually no audio, so signals are noisier and thresholds are stricter.
 
 ## Disclosures
 
-- **Models:** MediaPipe Face Landmarker (`face_landmarker.task`, float16, Google); Qwen2.5 3B Instruct (`qwen2.5:3b`) via Ollama.
-- **Frameworks and libraries:** `@mediapipe/tasks-vision`, React, Vite, TypeScript, Tailwind CSS, Vitest.
-- **APIs and cloud services:** none at runtime. The Ollama HTTP API is on localhost.
+- **Models:** MediaPipe Face Landmarker (`face_landmarker.task`, float16, Google). Local LLM via Ollama: Qwen2.5 3B Instruct (`qwen2.5:3b`, tested); Qwen3 4B / Qwen3 1.7B (`qwen3:4b`, `qwen3:1.7b`) used automatically if installed.
+- **Frameworks and libraries:** React, Vite, TypeScript, Tailwind CSS, MediaPipe Tasks Vision (`@mediapipe/tasks-vision`), Ollama, Vitest.
+- **APIs and cloud services:** none at runtime for the core loop. The Ollama HTTP API is on localhost. The landing site is static hosting only.
 - **Existing code and assets:** none; built during the hackathon. Third-party packages above are unmodified.
 - **AI development tools:** Claude Code.
+- **Tested hardware:** ASUS Vivobook K3605VC — Intel Core i5-13420H, NVIDIA GeForce RTX 3050 Laptop GPU 4 GB, 7.7 GB RAM, Windows 11, Ollama 0.40.1, `qwen2.5:3b`. Measurements: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
-## Limits (honest ones)
+## Docs
 
-- Webcam gaze estimates are approximate; the app judges gaze relative to each candidate's own Baseline instead of claiming screen coordinates.
-- The reading-pattern rule looks for a repeated sweep-and-return rhythm. Someone can read without that rhythm, and some natural eye movement can resemble it, so every Flag is a prompt for a follow-up question, not a conclusion.
-- In meeting-window mode the candidate's face is smaller and compressed, so signals are noisier than in webcam mode.
+| Doc | What it covers |
+|---|---|
+| [docs/PRD-product.md](docs/PRD-product.md) | Product requirements (source of truth) |
+| [docs/PRD-landing-page.md](docs/PRD-landing-page.md) | Landing site requirements |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modules, data flow, local AI boundary |
+| [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) | Per-module build plan |
+| [docs/USER_JOURNEY.md](docs/USER_JOURNEY.md) | Interviewer journey through the app |
+| [docs/SITEMAP.md](docs/SITEMAP.md) | Screens and landing sections |
+| [docs/BENCHMARK.md](docs/BENCHMARK.md) | Measured performance on the tested laptop |
+| [CONTEXT.md](CONTEXT.md) | Domain vocabulary |
 
 ## License
 
-MIT
+[MIT](LICENSE)
