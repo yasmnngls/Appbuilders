@@ -167,3 +167,20 @@ Findings:
 - In G, the model respected `previous_follow_ups` and moved to "specific steps" instead of asking about personal contribution again.
 - For the hero demo the model said "What specific tasks did you perform on the backend?" (personal contribution, reusing "backend").
 - The model sometimes writes an `interviewer_note` about the answer ("Candidate described team's work…") instead of the observation. The note check (KIND_WORDS) rejects it and the deterministic observation note is shown.
+
+## Full pipeline, live Session (v1.3)
+
+Run on 2026-10-10 in headed Chrome with fake devices:
+- **Mic:** a SAPI speech WAV with the question, then the hero answer.
+- **Camera:** a gray Y4M (no face, so a Face-missing Flag).
+- **Services:** the dev server, whisper `tiny.en` (CPU, 4 threads) and Ollama `qwen2.5:3b` (GPU).
+
+The pipeline ran Consent → Webcam → Baseline → transcript → spoken Question (Q2) → gate → follow-up. It did so twice; both runs gave "What specific tasks did you perform on the back end?" (gap: personal contribution). No request left localhost.
+
+| Measure | Value |
+|---|---|
+| whisper-server working set | 130 MB |
+| Ollama runner working set (model in VRAM) | 35 MB RAM; GPU memory 2169 MiB |
+| All Chrome processes (includes other open Chrome windows) | 998 MB |
+| System RAM in use (dev tools and agents also open) | 7362 / 7862 MB |
+| Clean-machine total, real voices, real meeting tab | PENDING MANUAL RUN |

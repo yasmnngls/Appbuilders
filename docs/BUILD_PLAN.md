@@ -1425,3 +1425,154 @@ Status key:
    - set the GitHub, demo and post URLs in `landing/index.html`;
    - deploy `landing/` and make `og:image` absolute;
    - publish the X/LinkedIn post.
+
+
+---
+
+# v1.3 Architecture Change: transcript-grounded follow-ups (2026-10-10)
+
+## Why
+The audit asked: *how does the system know what follow-up to ask?* Before v1.3 it didn't. There was no transcript. The model received only the Question label and the gaze/face Flags, so the Flag effectively chose the follow-up. A complete answer still got a generic one ("Could you walk me through what you personally did…"). Cases A–G could not be distinguished.
+
+## Assessment
+| | |
+|---|---|
+| **CURRENT (before)** | Vision → Baseline/rules → evidence gate → follow-up reducer (max 2, 30 s re-observe). Energy VAD only. Qwen2.5:3b wrote a note plus a generic follow-up from the Flags. Manual "New Question" with a typed label. |
+| **PROBLEM** | No conversational context, so a follow-up could not be grounded in the answer, could not be skipped when the answer was complete, and could not avoid re-asking. |
+| **KEEP** | Vision pipeline, gate and thresholds, follow-up reducer and MAX_FOLLOW_UPS, guard/banned language, Ollama client, Consent, CSP, telemetry block, exports. |
+| **REPLACE** | Generic Flag-driven follow-up → transcript-grounded reasoning. Manual Question as the primary path → spoken-question detection (manual stays as fallback). |
+| **ADD** | whisper.cpp server, per-source audio capture, utterance pipeline, transcript store, context window, gap analyzer, Live context panel, "Why this follow-up". |
+
+## New pipeline
+```text
+Interviewer mic ─┐                       ┌─ Candidate video → MediaPipe → Signals → Baseline/rules/gate
+Interview audio ─┴→ utterances (VAD, ≤15 s) → whisper.cpp (127.0.0.1:8178) → Transcript ─┐        │
+                                              question detection ← interviewer lines    │        │
+                                      CONTEXT ENGINE (question + answer + previous follow-ups + gaps)
+                                              │  worth exploring (gate)  AND  real gap not yet asked?
+                                       no → "No follow-up suggested — <reason>"     yes → Qwen words ONE follow-up
+                                                                                         → guard → Interviewer Ask/Continue/Dismiss
+```
+Rule: **vision decides *whether*, conversation decides *what*.** The observation is passed to the model as context only. The guard rejects any follow-up about eyes, screen, notes or reading.
+
+## Modules
+| Area | Files | What it does |
+|---|---|---|
+| Local ASR | `scripts/whisper-setup.ps1`, `scripts/whisper-server.mjs`, `src/asr/*`, `/whisper` proxy | whisper.cpp b5454 CPU build, `tiny.en`, 4 threads, bound to 127.0.0.1:8178. Client sends a 16 kHz WAV in memory and strips non-speech tokens. `/health` probe. |
+| Mic capture | `src/capture/source.ts` | `openMic(deviceId)` with echo cancellation and noise suppression. Device dropdown on the Source screen. |
+| System/application audio | `src/capture/source.ts` | `getDisplayMedia({audio:true})` with no preferred surface. Chrome/Windows gives audio for a **tab** or the **entire screen**, never a single window. In that case `shareAudioNotice()` shows the exact fix. No faking. |
+| Utterances | `src/audio/utterances.ts` | Streaming 16 kHz downsampler, VAD segmenter (reuses SpeechActivityDetector thresholds, 300 ms pre/post-roll, 15 s cut, <0.5 s dropped), one request at a time per stream, drop-oldest queue (>3). PCM lives in memory only until it is transcribed. |
+| Speaker separation | controller | By source: mic = `interviewer`, tab/system/file audio = `candidate`, webcam shared mic = `mixed`. No voice diarization. |
+| Question detection | `src/context/questions.ts` | Interviewer/mixed line that looks like a question (prompt words or "?", ≥5 words, filler blocklist) at least 20 s into the current Question → new Question (`origin: "spoken"`). Within 20 s of Ask or while re-observing it counts as the follow-up being spoken, not a new Question. The first question relabels the auto Q1 if the Candidate hasn't spoken yet. "Mark new question" (N) is the fallback. |
+| Context window | `src/context/answer.ts` | Question text, the Candidate's answer (last 1200 chars), last 6 lines, previous follow-ups and their gaps. Never the whole interview. |
+| Gap analyzer | `src/context/gaps.ts` | Deterministic and explainable: **personal contribution** ("we/team", no concrete "I did"), **specific steps** (vague "solved/fixed/finished", no how), **outcome** (no result). <8 words = too brief to judge (no follow-up). Each gap has an evidence sentence. |
+| Reasoning wrapper | `src/llm/contract.ts`, `guard.ts`, `moments.ts` | No transcript / too brief / complete / every gap already asked → **no follow-up, model not called**. Otherwise Qwen gets the §28 v1.3 input and must pick an un-asked analyzer gap. The guard checks: neutral, one "?", caps, grounded, Jaccard <0.6 vs previous follow-ups, no eyes/screen/notes/reading. One retry, then a template for the first un-asked gap, filled with a topic noun from the answer. Waits up to 8 s for the Candidate's utterance to end, then re-reads the latest transcript. |
+| UI | `LiveScreen`, `SourceScreen`, `StatusBar`, `FollowUpCard` | Live context panel (last 4 lines, ● Listening / ● Observing). Source chips (Mic / Interview audio / Video / Speech recognition). "Why this follow-up: Q · Answer covered · Unclear: gap — reason". "No follow-up suggested — reason" with Continue only. |
+| Report/exports | `src/llm/report.ts`, `ReportScreen` | Per Question: spoken text, follow-ups with "Why". Timeline includes Interviewer/Candidate speech events (**without words** in Markdown/PDF). The transcript is only in the JSON export. |
+
+## Follow-up reasoning: Cases (tests + live)
+| Case | Expected | Unit test (mocked LLM) | Live qwen2.5:3b (3 runs) |
+|---|---|---|---|
+| A complete answer | no follow-up | ✓ | 3/3 (model not called) |
+| B team, not self | personal contribution | ✓ | 3/3 "What specific tasks did you handle in the project?" |
+| C "I solved it", no how | specific steps | ✓ | 3/3 "What specific steps did you take to solve the login flow bug?" |
+| D no result | outcome | ✓ | 3/3 "What was the outcome of fixing the payment service issues?" |
+| E Flag + complete answer | no follow-up | ✓ (even if the model returns one) | 3/3 |
+| F Flag + gap | targeted follow-up reusing the answer's topic | ✓ | 3/3 |
+| G personal already asked | different gap, no repeat | ✓ | 3/3 → specific steps |
+| G2 no gap left | none | ✓ | 3/3 |
+| No transcript | none, `basis: no-transcript` | ✓ | — |
+| Model asks "Were you reading?" | rejected → template | ✓ | — |
+| Hero demo | personal contribution on "backend" | ✓ | 3/3 "What specific tasks did you perform on the backend?" |
+
+**Known model weakness:** in a raw probe without the wrapper, qwen2.5:3b *never* says an answer is complete; it invents a "specific steps" gap for A/E/G2. The deterministic analyzer decides those cases first, so the app still suggests nothing. The reason shown is always the analyzer's evidence sentence, never model free text.
+
+## Real browser end-to-end (2026-10-10, headed Chrome, fake devices)
+Setup:
+- **Mic:** SAPI speech WAV, played into the browser as the fake microphone. It carries the question, then the hero answer.
+- **Camera:** a gray Y4M as the camera, so there is no face → a Face-missing Flag.
+- **Services:** dev server, whisper `tiny.en`, Ollama `qwen2.5:3b`.
+
+Observed:
+- Transcript lines arrived ("Tell me about a difficult project you have worked on.", "I worked on a web application with my team.", "The back end was difficult.", "But eventually we finished it.").
+- The spoken question became **Q2 (`origin: spoken`)** automatically.
+- The gate opened a Moment.
+- Qwen produced **"What specific tasks did you perform on the back end?"** with reasoning "personal contribution — The answer describes the team's work ("team" ×1, "we" ×1) but not what the Candidate personally did."
+- A Moment opened during the earlier 5-word fragment showed "too brief to judge — no follow-up suggested".
+- **0 requests left localhost** during the run (all traffic same-origin `/ollama`, `/whisper`).
+
+Screenshot checked: card, Why line, Live context, chips.
+
+## Audit status (honest)
+**WORKING (verified):**
+- local whisper transcription (clean speech, word-for-word);
+- utterance segmentation → transcript in a live Session;
+- spoken-question detection;
+- transcript-grounded follow-up with reasoning;
+- no-follow-up paths (complete / too brief / no transcript / gaps exhausted);
+- guard against observation-based questions;
+- max-2 enforced in the reducer;
+- no traffic beyond localhost;
+- all unit tests: 436 passed, 1 skipped (opt-in live);
+- typecheck clean.
+
+**FIXED in v1.3:**
+- Flag-driven generic follow-ups;
+- a complete answer still getting a follow-up;
+- repeated probing of the same point;
+- the manual Question label as the primary path;
+- the stale-transcript race (the session was read before the queue wait; now re-read via `latest`);
+- transcript text leaking into Markdown/PDF.
+
+**PARTIALLY WORKING:**
+- **Speaker separation:** by source only; a shared mic is "mixed". Without headphones the Interviewer mic can hear the Candidate (echo cancellation helps, not guaranteed).
+- **Gap analyzer:** suits behavioural/experience questions (three areas). For other question types its checks may not fit.
+- **Interviewer Note duration:** on a Flag that began in an earlier Question it reports the whole duration (e.g. "66 s during Q2").
+- **ScriptProcessor:** deprecated but works.
+
+**NOT TESTED (needs a person at the laptop):**
+- the real Chrome share picker with "Share tab audio" / "Share system audio";
+- a real two-person meeting;
+- transcription accuracy on real voices, accents and noise;
+- echo without headphones;
+- whisper latency while the LLM is generating at the same moment;
+- a real Wi-Fi-off run with whisper;
+- a real face (the fake camera has none);
+- Save-as-PDF with the new report.
+
+**KNOWN LIMITATIONS:**
+- A single-window share has no audio in Chrome, so for meetings use tab or entire-screen share.
+- whisper.cpp needs a one-time download (`npm run whisper:setup`) and runs as a second local process.
+- tiny.en is English only.
+
+**SECURITY:**
+- whisper-server binds 127.0.0.1 only (netstat verified).
+- The browser reaches it only via the same-origin proxy (the CSP is unchanged).
+- Audio is never stored.
+- The transcript is in memory, and only in the JSON export.
+- Downloads come from official GitHub/HF releases into a gitignored `tools/`.
+- Residual: any local process can call whisper-server/Ollama on loopback (same as before).
+
+**PERFORMANCE:**
+- whisper tiny.en: 0.5–0.65 s per 12.7 s utterance, 126–169 MB RAM.
+- Qwen follow-up call: ~5 s median in the live bench (1.6–2.3 s in an earlier run).
+- Total follow-up latency ≈ utterance end + whisper (~0.6 s) + Qwen (2–5 s).
+- Measured at the moment the follow-up appeared (2nd E2E run, which reproduced the same follow-up):
+  - all Chrome processes 998 MB (includes the user's other Chrome windows);
+  - whisper-server 130 MB;
+  - Ollama runner 35 MB of RAM (the model sits in VRAM: 2169 MiB GPU);
+  - system RAM in use 7362 / 7862 MB with dev tools and agents also running.
+- **8 GB is tight:** close other apps for the demo. A clean-machine total is PENDING MANUAL RUN.
+
+**SUBMISSION BLOCKERS:**
+- none in code;
+- the manual items above (especially a real meeting tab with audio and a real face) plus the demo video and landing links.
+
+## Hero demo script (deterministic)
+1. Start `npm run whisper`, Ollama and `npm run dev`. Use headphones.
+2. **Local Webcam** (in person) or **Online Interview → share the meeting tab with tab audio**.
+3. After the Baseline, ask: "Tell me about a difficult project you've worked on."
+4. The Candidate says: "I worked on a web application with my team. The backend was difficult, but eventually we finished it." They read from notes or look away for a sustained period.
+5. **Moment worth exploring** → "What specific tasks did you perform on the backend?" (wording varies). The Why line shows personal contribution.
+6. Click **Ask Follow-up**, say it, and the Candidate answers looking at the camera → re-observe 30 s → **Observation settled. No further follow-up suggested.**
+7. Show the same with a complete answer: a Flag may be recorded, but "No follow-up suggested".
