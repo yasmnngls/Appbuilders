@@ -42,6 +42,23 @@ export interface Flag {
   end: SessionTime | null;
   questionId: string | null;
   detail?: string;
+  /** Why the Flag was raised, for Flag Details (FR-009). */
+  evidence?: FlagEvidence;
+  /** The Interviewer dismissed this Flag in Flag Details; it no longer counts toward the evidence gate. */
+  dismissed?: boolean;
+}
+
+/** Observable measurements behind a Flag (FR-009). Degrees; direction is as seen by the Interviewer. */
+export interface FlagEvidence {
+  baseline?: Baseline;
+  /** Off-screen: threshold used, and the largest deviation from the baseline centre while the Flag was active. */
+  thresholdDeg?: { x: number; y: number };
+  peakDeviationDeg?: number;
+  direction?: "left" | "right" | "up" | "down";
+  /** Reading pattern: line sweeps counted in the window. */
+  cycles?: number;
+  /** Second face: most faces seen. */
+  faceCount?: number;
 }
 
 export interface Question {
@@ -52,12 +69,85 @@ export interface Question {
   start: SessionTime;
 }
 
-export interface InterviewerNote {
+/** Most follow-ups the assistant will suggest within one Question (PRD §11.2). */
+export const MAX_FOLLOW_UPS = 2;
+
+/** Live speech-activity context from the Source's audio. Used only to discount thinking pauses, never to infer state. */
+export type SpeechState = "speaking" | "pause" | "unavailable";
+
+/** A contiguous stretch with no speech; end is null while the pause is ongoing. */
+export interface Pause {
+  start: SessionTime;
+  end: SessionTime | null;
+}
+
+/**
+ * A Moment worth exploring: a Flag pattern that passed the evidence gate during a Question.
+ * Carries the locally generated Interviewer Note and suggested follow-up, and what the Interviewer did with it.
+ */
+export interface Moment {
   id: string;
+  questionId: string;
   t: SessionTime;
-  questionId: string | null;
+  kind: FlagKind;
+  /** "gate" = opened by the evidence gate; "interviewer" = opened from Flag Details → Explore. */
+  origin: "gate" | "interviewer";
+  /** Why the gate opened, in plain observable terms, e.g. "3 off-screen glances within 60s". */
+  reason: string;
+  flagIds: string[];
+  /** 1-based follow-up slot this Moment would use if asked. */
+  followUpNumber: number;
+  /** Interviewer Note (FR-011). Null while the local LLM is writing. */
+  note: string | null;
+  followUp: string | null;
+  quality: { specific: boolean; neutral: boolean; grounded: boolean } | null;
+  suggestion: "generating" | "llm" | "fallback";
+  decision: "pending" | "asked" | "continued" | "dismissed";
+  askedAt: SessionTime | null;
+  /** Re-observation outcome after the follow-up was asked. */
+  result: "settled" | "persisting" | null;
+}
+
+/** Where a Question stands in the Adaptive Follow-Up Loop (PRD §17). */
+export type FollowUpPhase =
+  | "observing"
+  | "worth_exploring"
+  | "re_observing"
+  | "settled"
+  | "persisting"
+  | "limit_reached"
+  | "dismissed";
+
+export interface FollowUpState {
+  questionId: string;
+  phase: FollowUpPhase;
+  /** Follow-ups asked in this Question. Never exceeds MAX_FOLLOW_UPS. */
+  used: number;
+  /** End of the current re-observation window, if re-observing. */
+  reObserveUntil: SessionTime | null;
+  /** The Moment currently shown to the Interviewer, if any. */
+  momentId: string | null;
+  /** Flags that started before this time no longer count toward the evidence gate. */
+  watchFrom: SessionTime;
+}
+
+export type TimelineKind =
+  | "question"
+  | "flag"
+  | "moment"
+  | "follow-up-asked"
+  | "continued"
+  | "dismissed"
+  | "settled"
+  | "persisting"
+  | "limit-reached"
+  | "session-end";
+
+export interface TimelineEvent {
+  t: SessionTime;
+  kind: TimelineKind;
+  questionId: string;
   text: string;
-  followUp?: string;
 }
 
 export interface SessionReport {
@@ -71,10 +161,16 @@ export interface Session {
   consentAt: number;
   startedAt: number;
   endedAt: number | null;
-  source: "webcam" | "window";
+  source: "webcam" | "window" | "video";
+  /** True when the Source had an audio track for speech-activity context (FR-005A). */
+  speechAvailable: boolean;
+  /** Local LLM model in use when the Session started, or null if none was available. */
+  llmModel: string | null;
   baseline: Baseline | null;
   questions: Question[];
   flags: Flag[];
-  notes: InterviewerNote[];
+  moments: Moment[];
+  followUp: FollowUpState;
+  timeline: TimelineEvent[];
   report: SessionReport | null;
 }

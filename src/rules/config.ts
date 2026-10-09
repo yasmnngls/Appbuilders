@@ -36,4 +36,23 @@ export const RULES = {
   },
   faceMissing: { onMs: 2_000, offMs: 500 },
   secondFace: { onMs: 1_000, offMs: 500 },
+  /** Evidence gate for a Moment worth exploring, and the follow-up loop (PRD §11). Precision over frequency. */
+  followUp: {
+    /** No Moment in the first seconds of a Question: thinking time. Flags starting inside it don't count. */
+    graceMs: 10_000,
+    secondFaceMs: 3_000,
+    faceMissingMs: 5_000,
+    /** One off-screen Flag held this long opens a Moment... */
+    offScreenSustainedMs: 6_000,
+    /** ...stricter when there is no speech context (FR-005A visual-only fallback). */
+    offScreenSustainedNoSpeechMs: 8_000,
+    /** Or this many off-screen Flags inside repeatWindowMs. */
+    repeatCount: 3,
+    repeatCountNoSpeech: 4,
+    repeatWindowMs: 60_000,
+    /** Off-screen glances inside a pause this short that ends with speech resuming are treated as thinking. */
+    thinkingPauseMaxMs: 4_000,
+    /** How long to re-observe after a follow-up is asked before calling it settled. */
+    reObserveMs: 30_000,
+  },
 } as const;
