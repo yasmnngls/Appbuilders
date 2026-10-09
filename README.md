@@ -101,12 +101,12 @@ Deploy by importing the repo into Vercel with **Root Directory = `landing`** (fr
 
 ## Source audio
 
-Speech activity tells the gate whether the Candidate is talking or pausing (thinking pauses are not flagged). What audio is available depends on the Source:
+Speech activity tells the gate whether someone is talking or pausing (a glance away inside a short pause that ends with speech resuming is treated as thinking, not counted). It is an energy-only voice-activity detector (RMS of the audio track every 50 ms, adaptive noise floor, threshold 3× floor and at least 0.01, 150 ms to start speaking, 400 ms of quiet to call a pause). There is no transcription and no speech model (no Whisper, no ASR), and it cannot tell the Interviewer's voice from the Candidate's. What audio is available depends on the Source:
 
 | Source | Audio | Notes |
 |---|---|---|
 | Local Webcam | Mic (echo cancellation + noise suppression) | Picks up both people in the room. That's acceptable: the gate only needs to know whether someone is talking, not who |
-| Meeting window | Usually **none**. Chrome only shares audio for tabs, or for the whole screen on Windows with "Share system audio" | When there's no track → `unavailable` → stricter thresholds. Shown in the status bar |
+| Meeting window | Usually **none** for a single window. Chrome shares audio for tabs, or for the whole screen on Windows with "Share system audio" (then it hears everything the laptop plays) | When there's no track → `unavailable` → stricter visual-only thresholds (off-screen 8 s instead of 6 s, 4 glances instead of 3). Shown on the Source screen and in the status bar |
 | Local Video | From the file, tapped with `createMediaElementSource` into a `MediaStreamDestination` | Never connected to the speakers, so there is no playback |
 
 ## Offline test
@@ -134,7 +134,7 @@ Offline run (PRD §20):
 9. Ask it; Gazewise re-observes.
 10. Show "Observation settled ✓" (or the pattern continuing), then move on and End session; export the PDF with Wi-Fi still off.
 
-Checklist: in DevTools → Network, only `localhost` requests appear. Measured results go in [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Checklist: in DevTools → Network, only `localhost` requests appear. (`@mediapipe/tasks-vision` has a built-in usage logger that posts task metrics to `odml.pa.googleapis.com` every 60 s; Gazewise refuses that request in `src/vision/faceTracker.ts`, so it never leaves the laptop.) Measured results go in [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 ## What it does not do
 
@@ -155,7 +155,7 @@ To keep the product honest, these are explicitly out of scope:
 
 - **Models:** MediaPipe Face Landmarker (`face_landmarker.task`, float16, Google). Local LLM via Ollama: Qwen2.5 3B Instruct (`qwen2.5:3b`, tested); Qwen3 4B / Qwen3 1.7B (`qwen3:4b`, `qwen3:1.7b`) used automatically if installed.
 - **Frameworks and libraries:** React, Vite, TypeScript, Tailwind CSS, MediaPipe Tasks Vision (`@mediapipe/tasks-vision`), Ollama, Vitest.
-- **APIs and cloud services:** none at runtime for the core loop. The Ollama HTTP API is on localhost. The landing site is static hosting only.
+- **APIs and cloud services:** none at runtime for the core loop. The Ollama HTTP API is on localhost. MediaPipe's built-in usage logging (`odml.pa.googleapis.com`) is blocked in the app. The landing site is static hosting only.
 - **Existing code and assets:** none; built during the hackathon. Third-party packages above are unmodified.
 - **AI development tools:** Claude Code.
 - **Tested hardware:** ASUS Vivobook K3605VC — Intel Core i5-13420H, NVIDIA GeForce RTX 3050 Laptop GPU 4 GB, 7.7 GB RAM, Windows 11, Ollama 0.40.1, `qwen2.5:3b`. Measurements: [docs/BENCHMARK.md](docs/BENCHMARK.md).

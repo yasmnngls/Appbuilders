@@ -44,15 +44,54 @@ Notes:
 - The GPU was not reserved for the benchmark: another session had loaded the same model just before the run, and other apps were open.
 - Only `qwen2.5:3b` is installed, so there is no Qwen3 row and no lighter-model row.
 
-## §14A.6 rows
+## Browser measurements (audit run, 2026-10-10)
+
+Machine: the laptop above (i5-13420H, RTX 3050 Laptop 4 GB, 7.7 GB RAM). This is **not** the PRD §14A.4 reference (RTX 4060 Laptop, 8 GB).
+
+Method: Microsoft Edge headless driven by puppeteer-core, with `--use-fake-device-for-media-stream` (Chromium's synthetic 1280×720 @ 20 fps camera and beeping mic). Code is HEAD `20459db` plus the MediaPipe telemetry block in `src/vision/faceTracker.ts`. Scripts are not in the repo.
+
+Caveats, read before using any number:
+- **No face in the fake camera.** With no face, Face Landmarker runs only its face detector, not the 478-point mesh. Per-frame cost with a real face will be higher. All vision numbers below are a lower bound.
+- **Headless WebGL ran on the Intel UHD iGPU** (`ANGLE (Intel, Intel(R) UHD Graphics … D3D11)`), not the RTX 3050. "GPU delegate" below means the iGPU. nvidia-smi VRAM did not change (2,169 MiB, all Ollama).
+- The fake camera delivers 20 fps, so frame-locked fps cannot go above 20.
+- Other audit agents were using the CPU, GPU, Ollama and other browsers at the same time. The first LLM latency below includes waiting behind their calls.
+- The real meeting-window path and the Wi-Fi-off test were not run.
+
+### Vision (fake camera, no face)
+
+| Delegate | Load (model already cached) | Warm-up (first 10 calls) | Frame-locked fps | `detectForVideo` p50 / p95 / max | Back-to-back throughput (same frame, 3 s) |
+|---|---|---|---|---|---|
+| GPU (Intel UHD iGPU via WebGL) | 206 ms | 4,610 ms (shader compile) | 20.0 | 9.3 / 21.1 / 32.8 ms | 94 calls/s |
+| CPU (XNNPACK WASM) | 199 ms | 293 ms | 19.3 | 11.9 / 30.0 / 55.9 ms | 90 calls/s |
+
+JS heap after both landmarkers: 23–28 MB (`performance.memory.usedJSHeapSize`). Browser process tree working set: 621 MB idle, 761 MB with both landmarkers loaded (10–11 processes; Windows working sets are noisy).
+
+### Full pipeline (§14A.6)
 
 | Test | Metrics | Result |
 |---|---|---|
-| Vision only | FPS, CPU, GPU, RAM, dropped frames | pending manual run — see README offline checklist |
-| Vision + Dashboard | FPS, RAM, UI responsiveness | pending manual run — see README offline checklist |
-| Vision + Local LLM | LLM load time, generation latency, RAM/VRAM | LLM alone measured above (cold load 11.4 s, p50 5.9 s, 2.01 GB VRAM). With vision running at the same time: pending manual run — see README offline checklist |
-| Full pipeline | pattern → follow-up latency | pending manual run — see README offline checklist |
-| Lightweight fallback | same metrics, smaller model / CPU path | pending manual run — see README offline checklist (no smaller model installed on this laptop) |
-| Offline mode | core AI loop continues with internet off (pass/fail) | pending manual run — see README offline checklist |
+| Vision only | FPS, CPU, GPU, RAM, dropped frames | Fake camera, no face: 20 fps (camera-limited), per-frame 9.3 ms p50 on GPU / 11.9 ms on CPU (table above). CPU %, GPU % and dropped frames with a real face: PENDING MANUAL RUN |
+| Vision + Dashboard | FPS, RAM, UI responsiveness | 5-minute live Session (webcam Source, controller + store running, no face): fps 20–21 every sample, JS heap 24.2–26.3 MB (no growth), browser tree 334 → 385 MB, 0 page errors. UI responsiveness with a real face: PENDING MANUAL RUN |
+| Vision + Local LLM | LLM load time, generation latency, RAM/VRAM | LLM alone: table above (cold load 11.4 s, p50 5.9 s, 2.01 GB VRAM). In the browser with vision running: 3 suggestions took 17.5 s, 8.2 s, 6.1 s (`lastLatencyMs`; the first waited behind other agents' Ollama calls). VRAM stayed 2,169 MiB because headless vision used the iGPU. With vision on the RTX 3050: PENDING MANUAL RUN |
+| Full pipeline | pattern → follow-up latency | Synthetic reading Flag injected into the store (Baseline set by hand): Flag → Moment opened 134 / 273 / 191 ms; Moment → suggestion ready 37.2 s / 8.2 s / 6.1 s (all `llm`, none template). With a real pattern from a real face: PENDING MANUAL RUN |
+| Lightweight fallback | same metrics, smaller model / CPU path | CPU delegate measured above (11.9 ms p50, fake camera). 15 fps cap (`VISION.lightweightMaxFps`): covered by unit tests only, not measured in the browser — PENDING MANUAL RUN. Smaller LLM: not installed — PENDING MANUAL RUN |
+| Offline mode | core AI loop continues with internet off (pass/fail) | Simulated offline (browser proxy to a dead port, loopback bypassed; `https://example.com` failed with `ERR_PROXY_CONNECTION_FAILED`): app load, MediaPipe WASM and model from `/mediapipe` and `/models`, Ollama via `/ollama`, three LLM suggestions and the Session Report (done in 4.7 s) all worked. 0 non-localhost requests over a 6-minute Session after the telemetry fix (before it, MediaPipe posted to `odml.pa.googleapis.com/v1/log`). Real Wi-Fi-off test: PENDING MANUAL RUN |
 
-To fill in the pending rows, run the app (`npm run build && npm run preview`) and follow BUILD_PLAN §14 and the README offline test. Read fps, the vision delegate, the last LLM latency and the gate-to-suggestion latency from the Live screen's diagnostics panel. Read CPU and GPU from Task Manager.
+### Speech activity (fake / synthetic audio)
+
+| Check | Result |
+|---|---|
+| Synthetic tone on 0–2 s, 3–5 s, 5.3–7 s | speaking at 0.21 s, pause at 2.27 s, speaking at 3.21 s, pause at 7.26 s. The 300 ms gap at 5–5.3 s was correctly bridged (shorter than the 400 ms release) |
+| Detection delay | onset reported ~150 ms after it begins; pause reported ~400 ms after silence begins |
+| Chromium fake mic (short beeps) | no transitions: the beeps are shorter than the 150 ms onset, so they never count as speech |
+| Local Video with audio | `hasAudio: true`, speech states changed during playback (pause → speaking → pause → speaking → pause) |
+
+### Sources
+
+| Source | Result |
+|---|---|
+| Local Video (12 s webm made in the browser) | played, Signals at 21–25 fps, `ended` → Session finished 13.8 s after start. Seeking back while live worked (time 5.57 → 5.05 s; this webm has no cues so seeks are imprecise) |
+| Local Video, invalid file | "This video file could not be played.", stays on the Source screen |
+| Webcam, permission denied | "Camera access was not granted…" |
+| Webcam, no camera (getUserMedia → `NotFoundError`, simulated) | "No camera was found on this laptop." |
+| Window capture | headless with auto-selected "Entire screen": stream had 1 video and 1 audio track, "Speech context available". A single meeting window on a real desktop: PENDING MANUAL RUN |
