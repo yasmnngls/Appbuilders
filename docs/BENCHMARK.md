@@ -124,3 +124,46 @@ Both models transcribed both utterances word for word ("Tell me about a difficul
 Not measured: accuracy on real microphone or meeting audio with accents and noise (SAPI speech is clean), and latency while the LLM is generating at the same time: PENDING MANUAL RUN.
 
 **Network check:** during inference, `netstat -ano` for the whisper-server PID showed only `LISTENING 127.0.0.1:<port>` and loopback `ESTABLISHED` connections from the benchmark client: no non-loopback bind and no non-loopback remote peer (all four runs and the CUDA run). The server binds to 127.0.0.1 only (`--host 127.0.0.1`), and the browser reaches it only through the same-origin `/whisper` Vite proxy.
+
+## Follow-up reasoning (live)
+
+`npm run bench:followup` runs Cases A–G and the hero demo (`src/context/testing/followUpCases.ts`, the same inputs as `src/context/followUpReasoning.test.ts`) through the real `writeSuggestion`: the same analyzer, system prompt, JSON schema, guard and templates as the app, against the local Ollama. "Pass" means the final suggestion met the case: no follow-up for A/E/G2; otherwise the expected gap, traceable to an analyzer gap, with no observation or banned wording, and the topic word where one is required. "Model right" compares the raw model verdict with the expectation, before the deterministic wrapper.
+
+Model: `qwen2.5:3b` via http://127.0.0.1:11434 · 3 runs per case · warm-up 251 ms · 13th Gen Intel(R) Core(TM) i5-13420H, 8 GB RAM · 2026-10-09 23:15 UTC
+
+| Case | Expected | Pass | Model said (raw) | Model right | Final follow-up (run 1) | Gap | Source | Wall ms (median) | Model call ms (median) |
+|---|---|---|---|---|---|---|---|---|---|
+| A complete answer | none | 3/3 | not called | — | (none) | — | fallback, none | 3 | — |
+| B team but not self | personal | 3/3 | gap: personal contribution | 3/3 | What specific tasks did you handle in the project? | personal contribution | llm | 5026 | 5020 |
+| C solved, no how | steps | 3/3 | gap: specific steps | 3/3 | What specific steps did you take to solve the login flow bug? | specific steps | llm | 5337 | 5336 |
+| D situation + action, no result | outcome | 3/3 | gap: outcome | 3/3 | What was the outcome of fixing the payment service issues? | outcome | llm | 5399 | 5398 |
+| E Flag + complete answer | none | 3/3 | not called | — | (none) | — | fallback, none | 0 | — |
+| F Flag + gap | personal + "billing" | 3/3 | gap: personal contribution | 3/3 | What specific tasks did you perform during the migration? | personal contribution | llm | 5096 | 5095 |
+| G repeat: personal already asked | steps/outcome | 3/3 | gap: specific steps | 3/3 | How did you approach and resolve the backend difficulties? | specific steps | llm | 5028 | 5027 |
+| G2 repeat: no gap left | none | 3/3 | not called | — | (none) | — | fallback, none | 0 | — |
+| HERO hero demo | personal/steps + "backend" | 3/3 | gap: personal contribution | 3/3 | What specific tasks did you perform on the backend? | personal contribution | llm | 5074 | 5073 |
+
+Total: 27/27 runs met the expectation.
+
+Raw model probe (one call per case, no wrapper; the app never sends A/E/G2 to the model):
+
+| Case | Expected | Model: covers? | Model: gap | Model follow-up | Guard | Model right | ms |
+|---|---|---|---|---|---|---|---|
+| A | none | false | specific steps | What specific steps did you take to profile and optimize the database queries? | pass | **no** | 5903 |
+| B | personal | false | personal contribution | What specific tasks did you handle in the project? | pass | yes | 5427 |
+| C | steps | false | specific steps | What specific steps did you take to solve the login flow bug? | pass | yes | 5535 |
+| D | outcome | false | outcome | What was the outcome of fixing the payment service issues? | pass | yes | 5597 |
+| E | none | false | specific steps | What specific steps did you take to profile and optimize the database queries? | pass | **no** | 5956 |
+| F | personal | false | personal contribution | What specific tasks did you perform during the migration? | pass | yes | 5479 |
+| G | steps/outcome | false | specific steps | How did you approach and resolve the backend difficulties? | pass | yes | 5284 |
+| G2 | none | false | specific steps | What specific steps did you take to split the work into the front end and data pipeline? | pass | **no** | 6039 |
+| HERO | personal/steps | false | personal contribution | What specific tasks did you perform on the backend? | pass | yes | 5652 |
+
+An earlier run on the same machine, a few minutes before (log only, same 27/27 result), measured 1.6–2.3 s per model call for B–G and 5.1–5.7 s for the hero demo. The run above measured about 5 s per call for every case. Other work was running on the laptop at the same time; the cause of the difference was not measured.
+
+Findings:
+- **qwen2.5:3b never answers `answer_covers_question: true`, even for a complete answer.** In the raw probe it invents a "specific steps" gap for A/E (complete answer) and for G2 (the only gap was already asked). The wrapper makes this harmless: the analyzer decides complete, too-brief, no-transcript and all-gaps-asked cases, and in those cases the model is never called for a follow-up.
+- When the analyzer finds a gap, the model picks the same gap in every run (B, C, D, F, G, hero) and its wording passed the guard, so the app showed the model text (source `llm`).
+- In G, the model respected `previous_follow_ups` and moved to "specific steps" instead of asking about personal contribution again.
+- For the hero demo the model said "What specific tasks did you perform on the backend?" (personal contribution, reusing "backend").
+- The model sometimes writes an `interviewer_note` about the answer ("Candidate described team's work…") instead of the observation. The note check (KIND_WORDS) rejects it and the deterministic observation note is shown.

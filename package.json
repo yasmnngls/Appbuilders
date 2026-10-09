@@ -11,6 +11,7 @@
     "test": "vitest run",
     "assets": "node scripts/fetch-assets.mjs",
     "bench:llm": "node scripts/bench-llm.mjs",
+    "bench:followup": "node scripts/bench-followup.mjs",
     "landing:dev": "npm --prefix landing run dev",
     "landing:build": "npm --prefix landing run build",
     "whisper": "node scripts/whisper-server.mjs",
