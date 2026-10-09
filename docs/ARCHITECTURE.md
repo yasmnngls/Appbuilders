@@ -2,6 +2,8 @@
 
 > Derived from [PRD-product.md](./PRD-product.md) v1.2 — if they disagree, PRD-product.md wins.
 > Vocabulary follows [CONTEXT.md](../CONTEXT.md) and PRD §7.
+>
+> **v1.3 update (2026-10-10):** a local speech-recognition layer was added. whisper.cpp runs on 127.0.0.1:8178 behind the `/whisper` proxy and transcribes the Interviewer's mic and the interview audio. Questions are detected from speech, and follow-ups are chosen from the transcript (`src/context/*`); vision only gates. The diagrams below show the v1.2 vision path, which is unchanged. See PRD §14 (v1.3) and BUILD_PLAN "v1.3 Architecture Change" for the full pipeline.
 
 ## 1. System overview
 
