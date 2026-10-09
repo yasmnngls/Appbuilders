@@ -1,6 +1,9 @@
 import type { FaceLandmarker, FaceLandmarkerResult } from "@mediapipe/tasks-vision";
+import { transcribe, whisperStatus } from "../asr/whisperClient";
 import { attachSpeechActivity } from "../audio/speechActivity";
-import { hasAudio, openLocalVideo, openWebcam, openWindowCapture, stopStream } from "../capture/source";
+import { attachUtterances, type SpokenSegment, type UtterancePipeline } from "../audio/utterances";
+import { hasAudio, micIdOf, openLocalVideo, openMic, openWebcam, openWindowCapture, shareAudioNotice, stopStream } from "../capture/source";
+import { decideSpokenQuestion, looksLikeQuestion, shortLabel } from "../context/questions";
 import { MAX_FOLLOW_UPS, type FollowUpState, type Moment, type Pause, type Session, type SessionTime } from "../domain/types";
 import { fallbackSuggestion, writeSuggestion } from "../llm/moments";
 import { checkOllama, currentModel, isLightweight, lastLatencyMs, onModelChange, warmUp } from "../llm/ollama";
@@ -41,6 +44,17 @@ let llmAbort: AbortController | null = null;
 let suggestionQueue: Promise<void> = Promise.resolve();
 let reportAbort: AbortController | null = null;
 let finishing = false;
+
+/** The Interviewer's own mic (window/video Sources). The webcam's mic is part of `stream` (speaker "mixed"). */
+let micStream: MediaStream | null = null;
+let chosenMicId: string | null = null;
+/** Utterance capture → local whisper.cpp. Started only while local speech recognition is available. */
+let interviewerPipe: UtterancePipeline | null = null;
+let candidatePipe: UtterancePipeline | null = null;
+let asrPoll: ReturnType<typeof setInterval> | null = null;
+/** When the Interviewer last clicked Ask Follow-up (an interviewer question right after it is the follow-up). */
+let lastAskAt: SessionTime | null = null;
+const ASR_POLL_MS = 15_000;
 
 /** The latest raw landmarker result, read by the overlay each animation frame (kept out of React state). */
 export const live: { result: FaceLandmarkerResult | null; crop: CropRect | null } = { result: null, crop: null };
@@ -110,7 +124,7 @@ export async function openSource(kind: Session["source"], file?: File): Promise<
     video.addEventListener("ended", onEnded);
     detachSource = () => video.removeEventListener("ended", onEnded);
   } else {
-    const s = kind === "webcam" ? await openWebcam() : await openWindowCapture();
+    const s = kind === "webcam" ? await openWebcam(chosenMicId ?? undefined) : await openWindowCapture();
     stream = s;
     const track = s.getVideoTracks()[0];
     track?.addEventListener("ended", onEnded);
@@ -122,8 +136,64 @@ export async function openSource(kind: Session["source"], file?: File): Promise<
   // The Source can end (or be replaced) while play() is pending; don't show a preview that is gone.
   if (stream !== opened || (kind !== "video" && !opened?.getVideoTracks().some((t) => t.readyState === "live")))
     throw new Error("The source stopped before the preview started. Try again.");
-  S.setSourceReady({ kind, hasAudio: hasAudio(stream) });
+  // Interviewer mic: separate for a shared meeting or a file; the webcam's own mic is shared ("mixed").
+  if (kind !== "webcam") {
+    const mic = await openMic(chosenMicId ?? undefined);
+    if (stream !== opened) {
+      stopStream(mic);
+      throw new Error("The source stopped before the preview started. Try again.");
+    }
+    micStream = mic;
+  }
+  publishSourceReady(kind);
+  void refreshAsr();
 }
+
+function publishSourceReady(kind: Session["source"]) {
+  const shared = kind === "window" && stream ? shareAudioNotice(stream) : null;
+  const notice = kind === "video" && !hasAudio(stream) ? "This video file has no audio track, so the Candidate can't be transcribed." : shared;
+  S.setSourceReady({
+    kind,
+    hasAudio: hasAudio(stream),
+    mic: kind === "webcam" ? hasAudio(stream) : hasAudio(micStream),
+    interviewAudio: kind !== "webcam" && hasAudio(stream),
+    notice,
+  });
+}
+
+/** Checks local speech recognition (never throws) and records it; starts listening if a Session is live. */
+async function refreshAsr() {
+  const st = await whisperStatus();
+  S.setAsr(st);
+  if (st.available && isLive()) startListening();
+}
+
+/** Screen 2: switch the Interviewer microphone (preview only). */
+export async function setMic(deviceId: string): Promise<void> {
+  const ready = store.get().sourceReady;
+  if (!ready || isLive()) return;
+  chosenMicId = deviceId || null;
+  const mic = await openMic(deviceId || undefined);
+  if (!mic) return;
+  if (ready.kind === "webcam" && stream) {
+    // One shared mic: swap the webcam stream's audio track.
+    stream.getAudioTracks().forEach((t) => {
+      t.stop();
+      stream?.removeTrack(t);
+    });
+    mic.getAudioTracks().forEach((t) => stream?.addTrack(t));
+  } else {
+    stopStream(micStream);
+    micStream = mic;
+  }
+  publishSourceReady(ready.kind);
+}
+
+/** The mic device currently in use (for the Screen 2 dropdown). */
+export const currentMicId = (): string | null => {
+  const kind = store.get().sourceReady?.kind;
+  return micIdOf(kind === "webcam" ? stream : micStream) ?? chosenMicId;
+};
 
 /** Back/cancel on Screen 2, and part of finish(): stops the stream and releases the file. */
 export function closeSource() {
@@ -131,6 +201,8 @@ export function closeSource() {
   detachSource = null;
   stopStream(stream);
   stream = null;
+  stopStream(micStream);
+  micStream = null;
   video.pause();
   video.srcObject = null;
   if (revokeVideo) {
@@ -157,12 +229,20 @@ export function startBaseline() {
   // Speech context (FR-005A): null = no audio track → stricter visual-only thresholds.
   const startT = Date.now();
   stopSpeech = stream ? attachSpeechActivity(stream, () => (store.get().session ? sessionNow() : Date.now() - startT), onSpeech) : null;
-  if (!S.startSession({ source: ready.kind, speechAvailable: stopSpeech !== null, llmModel: currentModel() })) {
+  const asr = store.get().asrStatus ?? { available: false, model: null };
+  if (!S.startSession({ source: ready.kind, speechAvailable: stopSpeech !== null, llmModel: currentModel(), asr })) {
     stopSpeech?.();
     stopSpeech = null;
     return;
   }
   S.setSpeech(stopSpeech ? "pause" : "unavailable");
+  lastAskAt = null;
+  if (asr.available) startListening();
+  // Re-check local speech recognition now, then every 15 s while it is off (it can be started mid-Session).
+  void refreshAsr();
+  asrPoll = setInterval(() => {
+    if (!store.get().session?.asr.available || !interviewerPipe && !candidatePipe) void refreshAsr();
+  }, ASR_POLL_MS);
 
   engine = new RuleEngine();
   crop = null;
@@ -195,6 +275,93 @@ export function startBaseline() {
     applyFpsCap();
     pipeline.start();
   }).catch((e) => store.set({ vision: { status: "error", message: String(e) } }));
+}
+
+// ---------------------------------------------------------------------------
+// Listening: utterances → local transcript → spoken Questions
+
+/** Starts utterance capture on the Interviewer mic and the interview audio (or the one shared webcam mic). Idempotent. */
+function startListening() {
+  const kind = store.get().session?.source;
+  if (!kind || !isLive()) return;
+  const common = { getT: sessionNow, transcribe, onSegment, onError: onAsrError };
+  if (kind === "webcam") {
+    interviewerPipe ??= stream ? attachUtterances({ ...common, stream, speaker: "mixed" }) : null;
+  } else {
+    interviewerPipe ??= micStream ? attachUtterances({ ...common, stream: micStream, speaker: "interviewer" }) : null;
+    candidatePipe ??= stream ? attachUtterances({ ...common, stream, speaker: "candidate" }) : null;
+  }
+  S.setListening(!!(interviewerPipe || candidatePipe));
+}
+
+function stopListening() {
+  interviewerPipe?.stop();
+  candidatePipe?.stop();
+  interviewerPipe = null;
+  candidatePipe = null;
+  if (asrPoll) clearInterval(asrPoll);
+  asrPoll = null;
+  S.setListening(false);
+}
+
+/** A failed request: re-check the server; if it went away, stop listening until the poll finds it again. */
+let checkingAsr = false;
+function onAsrError() {
+  if (checkingAsr) return;
+  checkingAsr = true;
+  void whisperStatus()
+    .then((st) => {
+      if (!isLive()) return;
+      S.setAsr(st);
+      if (!st.available) {
+        interviewerPipe?.stop();
+        candidatePipe?.stop();
+        interviewerPipe = candidatePipe = null;
+        S.setListening(false);
+      }
+    })
+    .finally(() => (checkingAsr = false));
+}
+
+/** True while the Candidate is speaking right now (interview audio, or the shared webcam mic). */
+export function candidateSpeaking(): boolean {
+  if (!isLive()) return false;
+  if (candidatePipe?.speaking()) return true;
+  if (store.get().session?.source === "webcam" && interviewerPipe?.speaking()) return true;
+  return store.get().speech === "speaking";
+}
+
+/** One transcribed utterance → transcript + timeline; an Interviewer question may start (or name) a Question. */
+function onSegment(seg: SpokenSegment) {
+  const s = store.get().session;
+  if (!s || s.endedAt !== null) return;
+  if (seg.speaker === "candidate") {
+    S.appendTranscript(seg, "candidate-speech");
+    return;
+  }
+  const current = S.currentQuestion(s);
+  const decision = decideSpokenQuestion({
+    text: seg.text,
+    speaker: seg.speaker,
+    t: seg.start,
+    current,
+    phase: s.followUp.phase,
+    lastAskAt,
+    candidateSpokeInCurrent: s.transcript.some(
+      (x) => x.questionId === current.id && (x.speaker === "candidate" || (x.speaker === "mixed" && !looksLikeQuestion(x.text))),
+    ),
+  });
+  if (decision === "new") {
+    const q = startQuestion(shortLabel(seg.text), { origin: "spoken", text: seg.text });
+    S.appendTranscript({ ...seg, questionId: q?.id }, "interviewer-speech");
+  } else if (decision === "relabel") {
+    S.relabelQuestion(current.id, seg.text, shortLabel(seg.text));
+    S.appendTranscript({ ...seg, questionId: current.id }, "interviewer-speech");
+  } else {
+    // Mixed (one shared mic): a question is the Interviewer; anything else is most likely the Candidate.
+    const kind = seg.speaker === "mixed" && decision === "none" && !looksLikeQuestion(seg.text) ? "candidate-speech" : "interviewer-speech";
+    S.appendTranscript(seg, kind);
+  }
 }
 
 /** Speech transitions → status + the pauses ring (last 120 s, open pause last). */
@@ -313,15 +480,23 @@ function checkInvariants(fu: FollowUpState, e: FollowUpEvent) {
 // ---------------------------------------------------------------------------
 // Interviewer actions
 
+/** "Mark new question" fallback (button / N). Questions are normally detected from the Interviewer's speech. */
 export function newQuestion(label?: string) {
-  const q = S.nextQuestion(label);
+  startQuestion(label, { origin: "manual" });
+}
+
+function startQuestion(label: string | undefined, meta: { origin: "spoken" | "manual"; text?: string }) {
+  const q = S.nextQuestion(label, meta);
   if (q) dispatch({ type: "question_started", questionId: q.id, t: q.start, label: `Q${q.number} ${q.label}` });
+  return q;
 }
 
 export function followUpAction(a: "ask" | "continue" | "dismiss") {
   const s = store.get().session;
   if (!s || !allowedActions(s.followUp).includes(a)) return;
-  dispatch({ type: a, t: sessionNow() });
+  const t = sessionNow();
+  if (a === "ask") lastAskAt = t;
+  dispatch({ type: a, t });
 }
 
 /** Flag Details → Explore: opens a Moment from this Flag (origin "interviewer"). */
@@ -374,6 +549,7 @@ export async function finish(): Promise<void> {
   engine = null;
   stopSpeech?.();
   stopSpeech = null;
+  stopListening();
   closeSource();
   live.result = null;
   S.endSession();

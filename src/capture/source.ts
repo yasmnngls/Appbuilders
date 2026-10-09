@@ -1,8 +1,16 @@
+/** Mic constraints: echo cancellation on so the Interviewer's mic doesn't re-transcribe the speakers. */
+const micAudio = (deviceId?: string): MediaTrackConstraints => ({
+  ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+});
+
 /**
- * Opens the local webcam with microphone audio (for local speech-activity context only).
+ * Opens the local webcam with microphone audio (in-person: one shared mic, transcribed as speaker "mixed").
  * If the mic is denied or missing, falls back to video only so the app still works.
  */
-export async function openWebcam(): Promise<MediaStream> {
+export async function openWebcam(micId?: string): Promise<MediaStream> {
   const video: MediaTrackConstraints = {
     width: { ideal: 1280 },
     height: { ideal: 720 },
@@ -10,25 +18,78 @@ export async function openWebcam(): Promise<MediaStream> {
     facingMode: "user",
   };
   try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
-      video,
-    });
+    return await navigator.mediaDevices.getUserMedia({ audio: micAudio(micId), video });
   } catch {
     return navigator.mediaDevices.getUserMedia({ audio: false, video });
   }
 }
 
+/** The Interviewer's own microphone (audio only). Null when denied or missing: the Session still runs. */
+export async function openMic(deviceId?: string): Promise<MediaStream | null> {
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: micAudio(deviceId), video: false });
+  } catch {
+    if (!deviceId) return null;
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: micAudio(), video: false });
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** Audio inputs on this laptop. Labels are empty until mic permission is granted. */
+export async function listMics(): Promise<{ id: string; label: string }[]> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter((d) => d.kind === "audioinput" && d.deviceId)
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `Microphone ${i + 1}` }));
+  } catch {
+    return [];
+  }
+}
+
+/** Device id of the mic a stream is using, if any. */
+export const micIdOf = (stream: MediaStream | null): string | null => stream?.getAudioTracks()[0]?.getSettings().deviceId ?? null;
+
 /**
- * Asks the Interviewer to pick a meeting window/tab (Meet/Zoom) to capture.
- * Requests audio too (Chrome offers tab/system audio); if the Interviewer doesn't
- * share audio the stream simply has no audio track.
+ * Asks the Interviewer to share the meeting (Meet/Zoom/Teams) as a browser tab, window or screen.
+ * Audio is requested; Chrome only provides it for a tab ("Share tab audio") or the entire screen
+ * ("Share system audio", Windows), never for a single application window. No surface is preferred,
+ * so the picker doesn't steer towards a window (the one choice without audio).
  */
 export function openWindowCapture(): Promise<MediaStream> {
   return navigator.mediaDevices.getDisplayMedia({
     audio: true,
-    video: { displaySurface: "window", frameRate: { ideal: 30 } } as MediaTrackConstraints,
-  });
+    video: { frameRate: { ideal: 30 } },
+    systemAudio: "include",
+    selfBrowserSurface: "exclude",
+    surfaceSwitching: "include",
+  } as DisplayMediaStreamOptions);
+}
+
+/** What the Interviewer actually shared: "browser" (tab), "window", "monitor" (screen), or null when unknown. */
+export function displaySurfaceOf(stream: MediaStream | null): "browser" | "window" | "monitor" | null {
+  const s = stream?.getVideoTracks()[0]?.getSettings() as (MediaTrackSettings & { displaySurface?: string }) | undefined;
+  const v = s?.displaySurface;
+  return v === "browser" || v === "window" || v === "monitor" ? v : null;
+}
+
+export const WINDOW_NO_AUDIO =
+  "This window has no audio. Share the meeting's browser tab, or the entire screen with 'Share system audio' on, to transcribe the Candidate.";
+export const SHARE_NO_AUDIO = {
+  browser: "No tab audio was shared. Share the tab again with 'Share tab audio' on to transcribe the Candidate.",
+  monitor: "No system audio was shared. Share the screen again with 'Share system audio' on to transcribe the Candidate.",
+  unknown: "No audio was shared. Share the meeting's browser tab (with 'Share tab audio'), or the entire screen with 'Share system audio' on, to transcribe the Candidate.",
+} as const;
+
+/** Honest message when a shared surface came back without audio; null when it has audio. */
+export function shareAudioNotice(stream: MediaStream): string | null {
+  if (hasAudio(stream)) return null;
+  const surface = displaySurfaceOf(stream);
+  if (surface === "window") return WINDOW_NO_AUDIO;
+  return surface ? SHARE_NO_AUDIO[surface] : SHARE_NO_AUDIO.unknown;
 }
 
 /** Stops every track (video and audio) of the stream. */
