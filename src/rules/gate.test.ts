@@ -36,9 +36,12 @@ describe("evaluateGate", () => {
     expect(evaluateGate(input([f], G + 5_000))).not.toBeNull();
   });
 
-  it("2. grace window: a Flag starting inside it never counts; one just after does", () => {
-    const early = flag("off-screen", Q.start + 5_000, Q.start + 25_000);
+  it("2. grace window: time inside it never counts; a Flag running past it counts only from its end", () => {
+    const early = flag("off-screen", Q.start + 5_000, Q.start + 14_000);
     for (let t = Q.start; t <= Q.start + 40_000; t += 250) expect(evaluateGate(input([early], t))).toBeNull();
+    const long = flag("off-screen", Q.start + 5_000, null);
+    expect(evaluateGate(input([long], G + 5_999))).toBeNull();
+    expect(evaluateGate(input([long], G + 6_000))?.reason).toBe("Gaze moved outside the usual range for 6 s");
     const late = flag("off-screen", Q.start + 11_000, Q.start + 18_000);
     expect(evaluateGate(input([late], Q.start + 18_000))?.kind).toBe("off-screen");
   });
@@ -117,6 +120,35 @@ describe("evaluateGate", () => {
     const f = flag("off-screen", G + 1_000, null);
     const followUp = { ...initialFollowUp(Q.id, Q.start), watchFrom: G + 2_000 };
     expect(evaluateGate(input([f], G + 20_000, { followUp }))).toBeNull();
+  });
+
+  it("7b. re-observing: a Flag still going at the Ask counts from the Ask (it has not settled)", () => {
+    const asked = { ...initialFollowUp(Q.id, Q.start), phase: "re_observing" as const, used: 1, reObserveUntil: G + 32_000, watchFrom: G + 2_000 };
+    const off = flag("off-screen", G + 1_000, null);
+    expect(evaluateGate(input([off], G + 7_999, { followUp: asked }))).toBeNull();
+    expect(evaluateGate(input([off], G + 8_000, { followUp: asked }))?.reason).toBe("Gaze moved outside the usual range for 6 s");
+    // Ended soon after the Ask: not enough, and not a new glance toward the repeat count either.
+    const tail = flag("off-screen", G + 1_000, G + 3_000);
+    const glances = [G + 10_000, G + 20_000].map((s) => flag("off-screen", s, s + 2_000));
+    expect(evaluateGate(input([tail, ...glances], G + 23_000, { followUp: asked }))).toBeNull();
+    // Reading carried over the Ask must keep going a whole reading window after it.
+    const r = flag("reading-pattern", G + 1_000, null, { evidence: { cycles: 4 } });
+    expect(evaluateGate(input([r], G + 11_999, { followUp: asked }))).toBeNull();
+    expect(evaluateGate(input([r], G + 12_000, { followUp: asked }))?.kind).toBe("reading-pattern");
+  });
+
+  it("7c. a Flag still going from the previous Question counts from this Question's grace end", () => {
+    const f = flag("second-face", Q.start - 2_000, null, { questionId: "q1" });
+    expect(evaluateGate(input([f], G + 2_999))).toBeNull();
+    expect(evaluateGate(input([f], G + 3_000))?.kind).toBe("second-face");
+    expect(evaluateGate(input([{ ...f, end: G + 1_000 }], G + 20_000))).toBeNull();
+  });
+
+  it("1b. face rules don't need the Baseline; gaze rules do", () => {
+    const fm = flag("face-missing", G + 1_000, null);
+    expect(evaluateGate(input([fm], G + 6_000, { baselineReady: false }))?.kind).toBe("face-missing");
+    const off = flag("off-screen", G + 1_000, null);
+    expect(evaluateGate(input([off], G + 20_000, { baselineReady: false }))).toBeNull();
   });
 
   it("8. a dismissed Flag is ignored", () => {

@@ -38,7 +38,7 @@ export const RULES = {
   secondFace: { onMs: 1_000, offMs: 500 },
   /** Evidence gate for a Moment worth exploring, and the follow-up loop (PRD §11). Precision over frequency. */
   followUp: {
-    /** No Moment in the first seconds of a Question: thinking time. Flags starting inside it don't count. */
+    /** No Moment in the first seconds of a Question: thinking time. Time inside it doesn't count toward any Flag. */
     graceMs: 10_000,
     secondFaceMs: 3_000,
     faceMissingMs: 5_000,

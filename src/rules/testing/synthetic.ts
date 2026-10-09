@@ -2,8 +2,10 @@
  * Deterministic synthetic Signal generator for rule tests (30 fps, seeded noise).
  * Gaze is in degrees; the generator tracks a "true" gaze point and adds uniform noise per frame.
  */
-import type { Signal } from "../../domain/types";
+import type { Flag, FollowUpPhase, FollowUpState, Pause, Question, Signal } from "../../domain/types";
 import { RuleEngine, type FlagTransition } from "../engine";
+import { initialFollowUp, reduceFollowUp, type FollowUpEffect, type FollowUpEvent } from "../followUp";
+import { evaluateGate } from "../gate";
 
 export const FPS = 30;
 const FRAME_MS = 1000 / FPS;
@@ -192,4 +194,118 @@ export function run(frames: Signal[], engine = new RuleEngine()): TimedTransitio
   const out: TimedTransition[] = [];
   for (const s of frames) for (const tr of engine.push(s)) out.push({ ...tr, emittedAt: s.t });
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Whole-loop harness: Signals → RuleEngine → store-like Flag list → evaluateGate → reduceFollowUp,
+// ticking every 250 ms like the controller (BUILD_PLAN M2.4).
+
+export const TICK_MS = 250;
+
+export interface Analysis {
+  trs: TimedTransition[];
+  /** Baseline readiness changes, in time order (ready after a learn, not ready after a reset). */
+  readiness: { t: number; ready: boolean }[];
+  endT: number;
+}
+
+/** Runs the engine once. `resetAt`: times at which the Interviewer resets the Baseline. */
+export function analyse(frames: Signal[], opts: { resetAt?: number[] } = {}): Analysis {
+  const engine = new RuleEngine();
+  const trs: TimedTransition[] = [];
+  const readiness: { t: number; ready: boolean }[] = [];
+  const resets = [...(opts.resetAt ?? [])].sort((a, b) => a - b);
+  let ready = false;
+  for (const s of frames) {
+    while (resets.length && resets[0] <= s.t) {
+      const t = resets.shift()!;
+      for (const tr of engine.resetBaseline(t)) trs.push({ ...tr, emittedAt: t });
+      if (ready) readiness.push({ t, ready: (ready = false) });
+    }
+    for (const tr of engine.push(s)) trs.push({ ...tr, emittedAt: s.t });
+    if (!ready && engine.currentBaseline) readiness.push({ t: s.t, ready: (ready = true) });
+  }
+  return { trs, readiness, endT: frames.at(-1)!.t };
+}
+
+/** When the Baseline first became ready (Infinity if never). */
+export const baselineAt = (a: Analysis) => a.readiness.find((r) => r.ready)?.t ?? Infinity;
+
+export type Interviewer = (state: FollowUpState, t: number) => FollowUpEvent | null;
+export const alwaysAsk: Interviewer = (s, t) =>
+  s.phase === "worth_exploring" || s.phase === "persisting" ? { type: "ask", t: t + 1_000 } : null;
+
+export interface SimOptions {
+  questions: Question[];
+  speech: { available: boolean; pauses: Pause[] };
+  interviewer?: Interviewer;
+  /** Extra events dispatched as-is on the first tick at or after their `t` (e.g. a double Ask). */
+  script?: FollowUpEvent[];
+}
+
+export function simulate(a: Analysis, opts: SimOptions) {
+  const { trs, readiness, endT } = a;
+  const flags: Flag[] = [];
+  const open = new Map<string, Flag>();
+  const phases: FollowUpPhase[] = [];
+  const effects: FollowUpEffect[] = [];
+  const questions = [...opts.questions].sort((x, y) => x.start - y.start);
+  const questionAt = (t: number) => [...questions].reverse().find((q) => q.start <= t) ?? null;
+  const readyAt = (t: number) => [...readiness].reverse().find((r) => r.t <= t)?.ready ?? false;
+  const script = [...(opts.script ?? [])].sort((x, y) => x.t - y.t);
+  let fu: FollowUpState | null = null;
+  let qi = -1;
+  let ti = 0;
+  let ids = 0;
+  let pending: FollowUpEvent | null = null;
+
+  const apply = (e: FollowUpEvent) => {
+    const r = reduceFollowUp(fu!, e);
+    fu = r.state;
+    effects.push(...r.effects);
+    if (phases.at(-1) !== fu.phase) phases.push(fu.phase);
+  };
+
+  for (let t = 0; t <= endT; t += TICK_MS) {
+    // Store: apply transitions emitted up to now.
+    while (ti < trs.length && trs[ti].emittedAt <= t) {
+      const tr = trs[ti++];
+      if (tr.state === "start") {
+        const f: Flag = { id: `f${++ids}`, kind: tr.kind, start: tr.t, end: null, questionId: questionAt(tr.t)?.id ?? null, evidence: tr.evidence };
+        flags.push(f);
+        open.set(tr.kind, f);
+      } else {
+        const f = open.get(tr.kind);
+        if (f) {
+          f.end = tr.t;
+          f.evidence = { ...f.evidence, ...tr.evidence };
+          open.delete(tr.kind);
+        }
+      }
+    }
+    // Controller: Question marker.
+    while (qi + 1 < questions.length && questions[qi + 1].start <= t) {
+      const q = questions[++qi];
+      if (!fu) fu = initialFollowUp(q.id, q.start);
+      apply({ type: "question_started", questionId: q.id, t: q.start, label: `Q${q.number} ${q.label}` });
+    }
+    if (!fu) continue;
+    // Interviewer presses a button.
+    while (script.length && script[0].t <= t) apply(script.shift()!);
+    if (pending && pending.t <= t) {
+      apply(pending);
+      pending = null;
+    }
+    // Controller tick: the re-observation clock, then the gate.
+    apply({ type: "tick", t });
+    const state: FollowUpState = fu;
+    if (state.phase === "observing" || state.phase === "re_observing") {
+      const hit = evaluateGate({ now: t, question: questions[qi], followUp: state, flags, baselineReady: readyAt(t), speech: opts.speech });
+      if (hit) apply({ type: "gate_hit", hit, momentId: `m${++ids}`, t });
+    }
+    if (!pending && opts.interviewer) pending = opts.interviewer(fu, t);
+  }
+  const moments = effects.filter((e) => e.type === "open_moment");
+  const results = effects.filter((e) => e.type === "moment_result");
+  return { flags, phases, effects, moments, results, final: fu as FollowUpState | null };
 }
