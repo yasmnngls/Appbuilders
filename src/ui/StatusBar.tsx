@@ -7,7 +7,7 @@ const Pill = ({ tone, children }: { tone: "ok" | "warn" | "bad" | "idle"; childr
     bad: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
     idle: "bg-zinc-800 text-zinc-400 ring-zinc-700",
   };
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${tones[tone]}`}>{children}</span>;
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors duration-200 ${tones[tone]}`}>{children}</span>;
 };
 
 export function StatusBar() {

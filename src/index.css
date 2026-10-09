@@ -14,3 +14,68 @@ body,
 body {
   @apply bg-zinc-950 text-zinc-100 antialiased;
 }
+
+@theme {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Pressable: instant feedback on press, exact properties only. */
+.press {
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+.press:enabled:active {
+  transform: scale(0.97);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--color-emerald-400);
+  outline-offset: 2px;
+}
+
+/* Entering list rows and chips (interruptible transitions, not keyframes). */
+.enter {
+  transition:
+    opacity 220ms var(--ease-out),
+    transform 220ms var(--ease-out),
+    filter 220ms var(--ease-out);
+  transition-delay: calc(var(--i, 0) * 40ms);
+}
+@starting-style {
+  .enter {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  .enter-blur {
+    filter: blur(4px);
+  }
+}
+
+/* Screen changes: Setup → Live → Report. */
+.screen-enter {
+  transition:
+    opacity 260ms var(--ease-out),
+    transform 260ms var(--ease-out);
+}
+@starting-style {
+  .screen-enter {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .press:enabled:active {
+    transform: none;
+  }
+  @starting-style {
+    .enter,
+    .screen-enter {
+      transform: none;
+      filter: none;
+    }
+  }
+}

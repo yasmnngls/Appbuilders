@@ -31,7 +31,7 @@ export function SetupScreen() {
     <button
       type="button"
       onClick={() => setSource(value)}
-      className={`rounded-xl border p-4 text-left transition ${
+      className={`press rounded-xl border p-4 text-left ${
         source === value ? "border-emerald-500 bg-emerald-500/10" : "border-zinc-800 hover:border-zinc-600"
       }`}
     >
@@ -76,13 +76,13 @@ export function SetupScreen() {
         </label>
       </div>
 
-      {error && <div className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{error}</div>}
+      {error && <div className="enter rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{error}</div>}
 
       <button
         type="button"
         disabled={!consent || !visionReady || starting}
         onClick={start}
-        className="rounded-lg bg-emerald-500 px-4 py-2.5 font-medium text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+        className="press rounded-lg bg-emerald-500 px-4 py-2.5 font-medium text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {!visionReady ? "Loading vision model…" : starting ? "Starting…" : "Start session"}
       </button>

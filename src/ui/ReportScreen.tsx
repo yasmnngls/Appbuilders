@@ -3,7 +3,7 @@ import { formatTime } from "../llm/notes";
 import { downloadFile, toJSON, toMarkdown } from "../llm/report";
 import { clearSession, useStore } from "../store/session";
 
-const button = "rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500 disabled:opacity-40";
+const button = "press rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500 disabled:opacity-40";
 
 export function ReportScreen() {
   const session = useStore((s) => s.session!);
@@ -28,7 +28,7 @@ export function ReportScreen() {
             type="button"
             disabled={!report}
             onClick={() => downloadFile(`${base}.md`, toMarkdown(session), "text/markdown")}
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40"
+            className="press rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40"
           >
             Export Markdown
           </button>
@@ -58,17 +58,17 @@ export function ReportScreen() {
       )}
 
       {report && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+        <div className="enter enter-blur rounded-xl border border-zinc-800 bg-zinc-900 p-5">
           <div className="text-sm font-medium text-zinc-400">Summary</div>
           <p className="mt-2 leading-relaxed">{report.summary}</p>
         </div>
       )}
 
-      {session.questions.map((q) => {
+      {session.questions.map((q, i) => {
         const flags = session.flags.filter((f) => f.questionId === q.id);
         const entry = report?.perQuestion.find((p) => p.questionId === q.id);
         return (
-          <div key={q.id} className="rounded-xl border border-zinc-800 p-5">
+          <div key={q.id} className="enter rounded-xl border border-zinc-800 p-5" style={{ "--i": i + 1 } as React.CSSProperties}>
             <div className="flex items-baseline justify-between">
               <h2 className="font-medium">
                 Q{q.number} · {q.label}

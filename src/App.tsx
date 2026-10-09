@@ -20,9 +20,11 @@ export default function App() {
         <StatusBar />
       </header>
       <main className="min-h-0 flex-1">
-        {phase === "setup" && <SetupScreen />}
-        {phase === "live" && <LiveScreen />}
-        {phase === "report" && <ReportScreen />}
+        <div key={phase} className="screen-enter h-full">
+          {phase === "setup" && <SetupScreen />}
+          {phase === "live" && <LiveScreen />}
+          {phase === "report" && <ReportScreen />}
+        </div>
       </main>
     </div>
   );

@@ -19,7 +19,7 @@ export function LiveScreen() {
         <button
           type="button"
           onClick={() => void finish()}
-          className="rounded-lg bg-zinc-100 px-4 py-2.5 font-medium text-zinc-950 hover:bg-white"
+          className="press rounded-lg bg-zinc-100 px-4 py-2.5 font-medium text-zinc-950 hover:bg-white"
         >
           End session & write report
         </button>
@@ -85,7 +85,7 @@ function QuestionBar() {
         <button
           type="button"
           onClick={next}
-          className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400"
+          className="press rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400"
         >
           Next question <kbd className="ml-1 rounded bg-emerald-700/40 px-1 text-xs">N</kbd>
         </button>
@@ -110,7 +110,7 @@ function FlagList() {
         {[...flags].reverse().map((f) => {
           const q = f.questionId ? byId.get(f.questionId) : undefined;
           return (
-            <li key={f.id} className="flex items-start gap-3 border-b border-zinc-800/60 px-4 py-2.5 last:border-0">
+            <li key={f.id} className="enter flex items-start gap-3 border-b border-zinc-800/60 px-4 py-2.5 last:border-0">
               <span
                 className={`mt-1.5 size-2 shrink-0 rounded-full ${f.end === null ? "animate-pulse bg-amber-400" : "bg-zinc-500"}`}
               />
@@ -155,7 +155,7 @@ function NotesPanel() {
           <div className="px-4 py-6 text-center text-sm text-zinc-500">Notes appear when there is something to say.</div>
         )}
         {[...notes].reverse().map((n) => (
-          <div key={n.id} className="border-b border-zinc-800/60 px-4 py-3 text-sm last:border-0">
+          <div key={n.id} className="enter enter-blur border-b border-zinc-800/60 px-4 py-3 text-sm last:border-0">
             <div className="font-mono text-xs text-zinc-500">{formatTime(n.t)}</div>
             <p className="mt-1 leading-relaxed">{n.text}</p>
             {n.followUp && <p className="mt-1.5 text-emerald-300">Ask: {n.followUp}</p>}

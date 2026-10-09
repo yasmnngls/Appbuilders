@@ -113,15 +113,16 @@ export function VideoPanel() {
 
         <div className="pointer-events-none absolute left-3 top-3 flex flex-col items-start gap-2">
           {progress < 1 && (
-            <div className="rounded-lg bg-zinc-950/80 px-3 py-2 text-xs text-zinc-300">
+            <div className="enter rounded-lg bg-zinc-950/80 px-3 py-2 text-xs text-zinc-300">
               Learning the candidate's normal gaze… {Math.round(progress * 100)}%
               <div className="mt-1.5 h-1 w-40 overflow-hidden rounded bg-zinc-800">
-                <div className="h-full bg-emerald-400 transition-all" style={{ width: `${progress * 100}%` }} />
+                <div className="h-full origin-left bg-emerald-400 transition-transform duration-100 ease-linear" style={{ transform: `scaleX(${progress})` }} />
               </div>
             </div>
           )}
           {active.map((f) => (
-            <div key={f.id} className="animate-pulse rounded-lg bg-amber-400 px-3 py-1.5 text-sm font-semibold text-zinc-950">
+            <div key={f.id} className="enter flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-1.5 text-sm font-semibold text-zinc-950 shadow-lg shadow-black/30">
+              <span className="size-1.5 animate-pulse rounded-full bg-zinc-950" />
               {FLAG_LABELS[f.kind]}
             </div>
           ))}
@@ -136,17 +137,17 @@ export function VideoPanel() {
       <div className="flex flex-wrap gap-2">
         {source === "window" && (
           <>
-            <button type="button" onClick={() => setSelecting((v) => !v)} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500">
+            <button type="button" onClick={() => setSelecting((v) => !v)} className="press rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500">
               {selecting ? "Cancel selection" : crop ? "Reselect candidate tile" : "Select candidate tile"}
             </button>
             {crop && (
-              <button type="button" onClick={() => commitCrop(null)} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500">
+              <button type="button" onClick={() => commitCrop(null)} className="press rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500">
                 Use whole window
               </button>
             )}
           </>
         )}
-        <button type="button" onClick={resetBaseline} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500">
+        <button type="button" onClick={resetBaseline} className="press rounded-lg border border-zinc-700 px-3 py-1.5 text-sm hover:border-zinc-500">
           Reset baseline
         </button>
       </div>
