@@ -26,6 +26,8 @@ export function StatusBar() {
   const fps = useStore((s) => (s.session && !s.session.endedAt ? Math.round(s.fps) : null));
   const speech = useStore((s) => s.speech);
   const hasSource = useStore((s) => running || !!s.sourceReady);
+  const asr = useStore((s) => (s.session && !s.session.endedAt ? s.session.asr : s.asrStatus));
+  const listening = useStore((s) => s.listening);
 
   const latencyText = latency !== null ? ` · ${(latency / 1000).toFixed(1)} s` : "";
 
@@ -40,6 +42,15 @@ export function StatusBar() {
       )}
       {fps !== null && <Pill tone={fps >= 20 ? "ok" : "idle"}>{fps} fps</Pill>}
       {hasSource && (speech === "unavailable" ? <Pill tone="idle">Speech context unavailable</Pill> : <Pill tone="ok">Speech context: on</Pill>)}
+      {hasSource && asr && (asr.available ? (
+        <Pill tone="ok" title="Speech is transcribed on this laptop (whisper.cpp). Audio is never stored.">
+          {listening ? "Transcribing locally" : "Speech recognition: local"}
+        </Pill>
+      ) : (
+        <Pill tone="idle" title="Start it with npm run whisper. Follow-ups need a transcript.">
+          Speech recognition off
+        </Pill>
+      ))}
       {llm === "ready" && <Pill tone="ok">{model ? `${model}${latencyText}` : "Local LLM ready"}</Pill>}
       {llm === "busy" && <Pill tone="ok">{model ?? "Local LLM"} writing…</Pill>}
       {llm === "unavailable" && (

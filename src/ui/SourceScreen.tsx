@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { closeSource, openSource, startBaseline, video } from "../app/controller";
+import { closeSource, currentMicId, openSource, setMic, startBaseline, video } from "../app/controller";
+import { listMics } from "../capture/source";
 import type { Session } from "../domain/types";
 import { useStore } from "../store/session";
 import { VideoPanel } from "./VideoPanel";
@@ -9,8 +10,8 @@ type Kind = Session["source"];
 const SOURCES: { kind: Kind; title: string; body: string; tag?: string }[] = [
   {
     kind: "window",
-    title: "Online Interview / Assessment Window",
-    body: "Share the Meet, Zoom or Teams window. The Candidate installs nothing.",
+    title: "Online Interview (Meet / Zoom / Teams)",
+    body: "Share the meeting's browser tab with tab audio, or the entire screen with system audio. The Candidate installs nothing.",
   },
   { kind: "webcam", title: "Local Webcam", body: "For in-person interviews. Works with no internet at all." },
   { kind: "video", title: "Local Video", body: "Replay a recorded interview file from this laptop.", tag: "Preview" },
@@ -34,6 +35,7 @@ export function SourceScreen() {
   const visionReady = useStore((s) => s.vision.status === "ready");
   const visionError = useStore((s) => (s.vision.status === "error" ? s.vision.message : null));
   const name = useStore((s) => s.draft?.candidateName ?? "Candidate");
+  const asr = useStore((s) => s.asrStatus);
   const [opening, setOpening] = useState<Kind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -105,19 +107,26 @@ export function SourceScreen() {
         <div className="card-enter flex flex-col gap-4">
           <VideoPanel maxHeight="55vh" />
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-            {sourceReady.hasAudio ? (
-              <span className="flex items-center gap-1.5 text-emerald-300">
-                <span aria-hidden className="size-1.5 rounded-full bg-emerald-400" />
-                Speech context available
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-zinc-400">
-                <span aria-hidden className="size-1.5 rounded-full bg-zinc-500" />
-                No audio from this Source — stricter visual-only thresholds will be used
-              </span>
-            )}
-            {sourceReady.kind === "window" && <span className="text-zinc-500">Tip: select the Candidate's tile for steadier tracking.</span>}
+            <Chip on={!!sourceReady.mic}>Mic</Chip>
+            <Chip on={!!sourceReady.interviewAudio || (sourceReady.kind === "webcam" && sourceReady.hasAudio)}>Interview audio</Chip>
+            <Chip on={playing}>Video</Chip>
+            <Chip on={!!asr?.available} title={asr?.model ?? undefined}>
+              Speech recognition (local) {asr === null ? "checking…" : asr.available ? "available" : "unavailable"}
+            </Chip>
           </div>
+          <AudioSetup kind={sourceReady.kind} mic={!!sourceReady.mic} interviewAudio={!!sourceReady.interviewAudio} />
+          {sourceReady.notice && (
+            <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              {sourceReady.notice}
+            </div>
+          )}
+          {!sourceReady.hasAudio && <p className="text-sm text-zinc-500">No Candidate audio — stricter visual-only thresholds will be used.</p>}
+          {asr && !asr.available && (
+            <p className="text-sm text-zinc-500">
+              Local speech recognition is off — follow-ups need a transcript. Start it with <code className="text-zinc-300">npm run whisper</code>.
+            </p>
+          )}
+          {sourceReady.kind === "window" && <p className="text-sm text-zinc-500">Tip: select the Candidate's tile for steadier tracking.</p>}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -139,7 +148,7 @@ export function SourceScreen() {
             </button>
           </div>
           <p className="text-sm text-zinc-500">
-            Start Baseline begins the Session with Q1 "Introduction". Small talk is ideal while the Baseline is learned (about 15 s).
+            Start Baseline begins the Session. Questions are picked up from what the Interviewer asks; nothing needs typing. Small talk is ideal while the Baseline is learned (about 15 s).
           </p>
         </div>
       )}
@@ -149,6 +158,81 @@ export function SourceScreen() {
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+function Chip({ on, title, children }: { on: boolean; title?: string; children: React.ReactNode }) {
+  return (
+    <span title={title} className={`flex items-center gap-1.5 ${on ? "text-emerald-300" : "text-zinc-400"}`}>
+      <span aria-hidden className={`size-1.5 rounded-full ${on ? "bg-emerald-400" : "bg-zinc-500"}`} />
+      {children}
+    </span>
+  );
+}
+
+/** Who is heard from where. Speakers are separated by audio source, never by voice. */
+function AudioSetup({ kind, mic, interviewAudio }: { kind: Kind; mic: boolean; interviewAudio: boolean }) {
+  const [mics, setMics] = useState<{ id: string; label: string }[]>([]);
+  const [selected, setSelected] = useState<string>("");
+
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      void listMics().then((m) => {
+        if (!alive) return;
+        setMics(m);
+        setSelected(currentMicId() ?? m[0]?.id ?? "");
+      });
+    load();
+    navigator.mediaDevices?.addEventListener?.("devicechange", load);
+    return () => {
+      alive = false;
+      navigator.mediaDevices?.removeEventListener?.("devicechange", load);
+    };
+  }, [kind, mic]);
+
+  const candidate =
+    kind === "webcam"
+      ? "In person: the same mic hears both of you, so lines are marked “Speaker”, not split by person."
+      : kind === "window"
+        ? interviewAudio
+          ? "From the shared meeting audio."
+          : "Not available: the shared surface has no audio."
+        : interviewAudio
+          ? "From the video file's audio."
+          : "Not available: the file has no audio.";
+
+  return (
+    <div className="grid gap-3 rounded-xl border border-zinc-800 p-4 text-sm sm:grid-cols-2">
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="mic-select" className="font-medium">
+          {kind === "webcam" ? "Microphone (Interviewer + Candidate)" : "Microphone (Interviewer)"}
+        </label>
+        <select
+          id="mic-select"
+          value={selected}
+          disabled={mics.length === 0}
+          onChange={(e) => {
+            setSelected(e.target.value);
+            void setMic(e.target.value);
+          }}
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 outline-none focus:border-emerald-500 disabled:opacity-50"
+        >
+          {mics.length === 0 && <option value="">No microphone found</option>}
+          {mics.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        {!mic && <span className="text-zinc-400">Mic not available — allow it in the browser's site settings.</span>}
+        {kind !== "webcam" && <span className="text-zinc-500">Use headphones so your mic doesn't pick up the Candidate.</span>}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <span className="font-medium">Interview audio (Candidate)</span>
+        <span className={interviewAudio || kind === "webcam" ? "text-zinc-300" : "text-zinc-400"}>{candidate}</span>
+      </div>
     </div>
   );
 }
