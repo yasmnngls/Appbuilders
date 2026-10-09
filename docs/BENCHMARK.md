@@ -22,7 +22,7 @@ Sources: `systeminfo`, `Win32_Processor`, `nvidia-smi`, `ollama -v`, `ollama lis
 
 ## Local LLM (§14A.6 "Vision + Local LLM", LLM part)
 
-Command: `npm run bench:llm` ([scripts/bench-llm.mjs](../scripts/bench-llm.mjs)).
+Measured on 2026-10-10 against the **v1.2 contract** (follow-up from the Question label + Flags), with the since-retired `scripts/bench-llm.mjs` (see git history). The cold-load, latency and memory numbers still describe the model on this laptop. The **v1.3** transcript-grounded contract is measured in "Follow-up reasoning (live)" below; `npm run bench:llm` now runs that benchmark.
 
 Method: the model is unloaded (`keep_alive: 0`), then loaded cold with a 1-token call. Then 5 calls for each of three fixed §28 Moments (reading-like pattern on "Tell me about a project you led", off-screen on "How do you debug a production outage", second face on "Describe a disagreement with a teammate", the last with `final: true`). Each call uses the app's real `CONTRACT_SYSTEM`, `CONTRACT_SCHEMA`, `contractUserMessage`, `temperature: 0` and `num_predict: 200`, sent straight to `http://127.0.0.1:11434/api/chat`. Every answer goes through the app's `checkQuality` / `findBanned`. The pass rule matches `writeSuggestion`: neutral, with a non-empty note and follow-up. Latency is wall time per call. p50/p95 use nearest rank over 15 calls, so p95 here equals the slowest call.
 

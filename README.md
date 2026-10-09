@@ -52,7 +52,7 @@ The MediaPipe WASM runtime and Face Landmarker model are committed under `public
 | `npm test` | Unit tests (vitest) |
 | `npm run typecheck` | TypeScript only |
 | `npm run assets` | Re-download the vendored MediaPipe files into `public/` |
-| `npm run bench:llm` | Local LLM benchmark (see [docs/BENCHMARK.md](docs/BENCHMARK.md)) |
+| `npm run bench:llm` | Local LLM follow-up benchmark, Cases A–G on the real model (see [docs/BENCHMARK.md](docs/BENCHMARK.md)) |
 | `npm run landing:dev` / `npm run landing:build` | Landing site in `landing/` |
 
 ### Using it
