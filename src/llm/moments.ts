@@ -1,7 +1,7 @@
 import { MAX_FOLLOW_UPS, type Flag, type Moment, type Session } from "../domain/types";
 import { LLM } from "./config";
 import { buildContractInput, CONTRACT_SCHEMA, CONTRACT_SYSTEM, contractUserMessage, type ContractInput, type ContractOutput } from "./contract";
-import { checkQuality } from "./guard";
+import { checkQuality, clip, MAX_FOLLOW_UP_CHARS, MAX_NOTE_CHARS, stripUngroundedTopic } from "./guard";
 import { chatJSON, currentModel, lastLatencyMs } from "./ollama";
 
 export interface Suggestion {
@@ -71,11 +71,19 @@ const KIND_WORDS: Record<Moment["kind"], RegExp> = {
 };
 
 const nonEmpty = (v: unknown) => typeof v === "string" && v.trim() !== "";
-/** Pass rule (M5.3): neutral, and both texts present. */
-const passes = (a: Attempt) => a.check.neutral && nonEmpty(a.out?.follow_up) && nonEmpty(a.out?.interviewer_note);
+const fits = (v: unknown, max: number) => typeof v === "string" && v.trim().length <= max;
+/** Pass rule (M5.3): neutral, both texts present, and neither longer than its cap. */
+const passes = (a: Attempt) =>
+  a.check.neutral &&
+  nonEmpty(a.out?.follow_up) &&
+  nonEmpty(a.out?.interviewer_note) &&
+  fits(a.out.follow_up, MAX_FOLLOW_UP_CHARS) &&
+  fits(a.out.interviewer_note, MAX_NOTE_CHARS);
 
-/** Event-driven: called once per opened Moment. Never throws. */
+/** Event-driven: called once per opened Moment. Never throws; settles within LLM.suggestionBudgetMs (queue wait included). */
 export async function writeSuggestion(session: Session, moment: Moment, signal?: AbortSignal): Promise<Suggestion> {
+  const budget = AbortSignal.timeout(LLM.suggestionBudgetMs);
+  const deadline = signal ? AbortSignal.any([signal, budget]) : budget;
   try {
     const input: ContractInput = buildContractInput(session, moment);
     const qNum = session.questions.find((q) => q.id === moment.questionId)?.number ?? null;
@@ -84,7 +92,7 @@ export async function writeSuggestion(session: Session, moment: Moment, signal?:
     let user = base;
     for (let i = 0; i <= LLM.maxRetries; i++) {
       const model = currentModel();
-      const out = await chatJSON<ContractOutput>(CONTRACT_SYSTEM, user, CONTRACT_SCHEMA, signal, { maxTokens: LLM.suggestionMaxTokens });
+      const out = await chatJSON<ContractOutput>(CONTRACT_SYSTEM, user, CONTRACT_SCHEMA, deadline, { maxTokens: LLM.suggestionMaxTokens });
       const check = checkQuality(out, input);
       const attempt: Attempt = { out, check, model, latencyMs: lastLatencyMs() };
       if (passes(attempt)) {
@@ -96,11 +104,11 @@ export async function writeSuggestion(session: Session, moment: Moment, signal?:
     const best = passed[0];
     if (!best) return fallbackSuggestion(session, moment);
     const { problems: _p, ...quality } = best.check;
-    const note = best.out.interviewer_note.trim();
+    const note = clip(stripUngroundedTopic(best.out.interviewer_note, input.question), MAX_NOTE_CHARS);
     return {
       // Small models sometimes name the wrong observation; keep the note factual by using the deterministic one then.
       note: KIND_WORDS[moment.kind].test(note) ? note : fallbackNote(session, moment),
-      followUp: best.out.follow_up.trim(),
+      followUp: clip(best.out.follow_up, MAX_FOLLOW_UP_CHARS),
       quality,
       source: "llm",
       model: best.model,

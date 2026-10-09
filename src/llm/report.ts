@@ -1,6 +1,7 @@
 import { FLAG_LABELS, MAX_FOLLOW_UPS, type Flag, type FlagKind, type Moment, type Question, type Session, type SessionReport, type SessionTime } from "../domain/types";
 import { LLM } from "./config";
-import { findBanned } from "./guard";
+import { promptLabel } from "./contract";
+import { clip, findBanned, MAX_FOLLOW_UP_CHARS } from "./guard";
 import { formatTime } from "./notes";
 import { chatJSON, isLightweight } from "./ollama";
 
@@ -155,11 +156,12 @@ export function journeysText(session: Session): string {
   const endT = sessionEnd(session);
   const lines = [`Interview length ${formatTime(endT)}.`];
   for (const j of buildJourneys(session)) {
-    lines.push("", `Q${j.question.number} "${j.question.label}" (starts ${formatTime(j.question.start)}):`);
+    // The label is Interviewer-typed: one line, clipped, JSON-quoted so it reads as data, not instructions.
+    lines.push("", `Q${j.question.number} ${JSON.stringify(promptLabel(j.question.label))} (starts ${formatTime(j.question.start)}):`);
     if (!j.flags.length) lines.push("- no Flags");
     for (const f of j.flags) lines.push(`- ${FLAG_LABELS[f.kind]} at ${formatTime(f.start)} for ${durationSec(f, endT)}s${f.dismissed ? " (dismissed by the interviewer)" : ""}`);
     for (const m of j.moments) lines.push(`- Moment worth exploring at ${formatTime(m.t)}: ${m.reason}; interviewer decision: ${m.decision}${m.result ? `; result: ${m.result}` : ""}`);
-    for (const a of j.followUpsAsked) lines.push(`- Follow-up ${a.n} asked at ${formatTime(a.at)}: "${a.text}"`);
+    for (const a of j.followUpsAsked) lines.push(`- Follow-up ${a.n} asked at ${formatTime(a.at)}: ${JSON.stringify(clip(a.text, MAX_FOLLOW_UP_CHARS))}`);
     lines.push(`- Outcome: ${OUTCOME_TEXT[j.outcome]}`);
   }
   return lines.join("\n");
@@ -170,8 +172,28 @@ interface RawReport {
   perQuestion?: { questionNumber?: unknown; observation?: unknown }[];
 }
 
-/** A non-empty string with no banned word, else null (that field falls back). */
-const clean = (v: unknown): string | null => (typeof v === "string" && v.trim() && findBanned(v).length === 0 ? v.trim() : null);
+/** Longest model-written summary / per-question observation kept; longer ones fall back. */
+const MAX_SUMMARY_CHARS = 600;
+const MAX_OBSERVATION_CHARS = 400;
+
+/** How model text names each Flag kind; used to reject text that reports a kind that was never observed. */
+const KIND_MENTION: Record<FlagKind, RegExp> = {
+  "reading-pattern": /reading/i,
+  "off-screen": /off[\s-]screen|outside the usual range|away from the screen/i,
+  "face-missing": /out of view|face (?:was |is )?(?:missing|not visible)|face missing/i,
+  "second-face": /second face|another face|two faces|another person|second person/i,
+};
+
+/**
+ * A non-empty string of at most max characters, with no banned word, that names only Flag kinds in `observed`;
+ * else null (that field falls back).
+ */
+const clean = (v: unknown, max: number, observed: Set<FlagKind>): string | null => {
+  if (typeof v !== "string" || !v.trim() || v.trim().length > max || findBanned(v).length) return null;
+  const invented = (Object.keys(KIND_MENTION) as FlagKind[]).some((k) => !observed.has(k) && KIND_MENTION[k].test(v));
+  return invented ? null : v.replace(/\s+/g, " ").trim();
+};
+const kindsOf = (flags: Flag[]) => new Set(flags.map((f) => f.kind));
 
 /**
  * Session Report: the local model writes the summary sentences over the deterministic journeys.
@@ -179,22 +201,26 @@ const clean = (v: unknown): string | null => (typeof v === "string" && v.trim() 
  */
 export async function generateReport(session: Session, signal?: AbortSignal): Promise<SessionReport> {
   const fallback = fallbackReport(session);
-  let raw: RawReport;
   try {
-    raw = await chatJSON<RawReport>(REPORT_SYSTEM, journeysText(session), REPORT_SCHEMA, signal, { timeoutMs: LLM.reportTimeoutMs, stepDown: false });
+    const raw = await chatJSON<RawReport>(REPORT_SYSTEM, journeysText(session), REPORT_SCHEMA, signal, {
+      timeoutMs: LLM.reportTimeoutMs,
+      stepDown: false,
+      maxTokens: LLM.reportMaxTokens,
+    });
+    const entries = Array.isArray(raw?.perQuestion) ? raw.perQuestion : [];
+    return {
+      summary: clean(raw?.summary, MAX_SUMMARY_CHARS, kindsOf(session.flags)) ?? fallback.summary,
+      perQuestion: session.questions.map((q, i) => {
+        const fb = fallback.perQuestion[i];
+        const e = entries.find((x) => Number(x?.questionNumber) === q.number);
+        const observed = kindsOf(session.flags.filter((f) => f.questionId === q.id));
+        return { ...fb, observation: clean(e?.observation, MAX_OBSERVATION_CHARS, observed) ?? fb.observation };
+      }),
+      generatedAt: fallback.generatedAt,
+    };
   } catch {
     return fallback;
   }
-  const entries = Array.isArray(raw?.perQuestion) ? raw.perQuestion : [];
-  return {
-    summary: clean(raw?.summary) ?? fallback.summary,
-    perQuestion: session.questions.map((q, i) => {
-      const fb = fallback.perQuestion[i];
-      const e = entries.find((x) => Number(x?.questionNumber) === q.number);
-      return { ...fb, observation: clean(e?.observation) ?? fb.observation };
-    }),
-    generatedAt: fallback.generatedAt,
-  };
 }
 
 const SOURCE_TEXT: Record<Session["source"], string> = { webcam: "webcam", window: "meeting window", video: "video file" };

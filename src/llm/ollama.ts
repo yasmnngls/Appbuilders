@@ -128,7 +128,7 @@ export interface ChatOptions {
  * Throws on HTTP/JSON failure, timeout or abort.
  */
 export function chatJSON<T>(system: string, user: string, schema: object, signal?: AbortSignal, opts: ChatOptions = {}): Promise<T> {
-  return enqueue(async () => {
+  const run = enqueue(async () => {
     signal?.throwIfAborted();
     const model = modelToUse();
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? LLM.timeoutMs);
@@ -178,5 +178,16 @@ export function chatJSON<T>(system: string, user: string, schema: object, signal
     } catch {
       throw new Error(`Ollama returned invalid JSON: ${content.slice(0, 200)}`);
     }
+  });
+  return signal ? untilAborted(run, signal) : run;
+}
+
+/** Rejects as soon as signal aborts, even while the job still waits in the single-flight queue (it then exits on start). */
+function untilAborted<T>(run: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    run.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
 }

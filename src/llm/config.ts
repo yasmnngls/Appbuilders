@@ -4,6 +4,10 @@ export const LLM = {
   timeoutMs: 20_000,
   /** The Session Report is written once after the Session, so it may take longer. */
   reportTimeoutMs: 90_000,
+  /** Whole budget for one Moment's suggestion (queue wait + call + retry); the deterministic fallback is shown after it. */
+  suggestionBudgetMs: 20_000,
+  /** Output cap for the Session Report call; a cut-off answer is invalid JSON and falls back. */
+  reportMaxTokens: 1500,
   /** Output cap for one suggestion (note + follow-up), keeps latency down. */
   suggestionMaxTokens: 200,
   /** A call slower than this (or a timeout) switches to the next lighter installed model. */

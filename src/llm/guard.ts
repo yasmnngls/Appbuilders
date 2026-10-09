@@ -6,7 +6,24 @@ export const BANNED = ["cheat", "cheating", "lie", "lying", "lied", "liar", "sus
   "violation", "risk", "integrity", "nervous", "anxious",
   // State-of-mind words: the report describes what was observed, never attention or feelings (PRD §18.6).
   "engaged", "disengaged", "engagement", "attention", "inattention", "attentive", "inattentive",
-  "distracted", "focused", "unfocused", "confident", "unconfident"] as const;
+  "distracted", "focused", "unfocused", "confident", "unconfident",
+  // Variants a stem match misses, and other judgements of honesty or feelings.
+  "cheated", "cheater", "nervously", "nervousness", "anxiety", "anxiously", "suspiciously", "uncomfortably",
+  "honest", "honestly", "honesty", "truthful", "truthfully", "untruthful", "stressed", "worried", "afraid",
+  "scared", "uneasy", "evasive", "guilty", "hiding"] as const;
+
+/**
+ * State-of-mind and reason phrasings (PRD §18.6): "you seem…", "you look…", "you were reading", "were you looking at…",
+ * "looked away because…". Each is reported by its label.
+ */
+const STATE_OF_MIND: [label: string, re: RegExp][] = [
+  ["seem", /(?<![\p{L}])seem(?:s|ed|ing|ingly)?(?![\p{L}])/iu],
+  ["appears to", /(?<![\p{L}])appear(?:s|ed)?\s+(?:to|as\s+if|like)(?![\p{L}])/iu],
+  ["you look", /(?<![\p{L}])(?:you|they|he|she|candidate)\s+(?:look|looks|looked|sound|sounds|sounded)(?![\p{L}])/iu],
+  ["you were reading", /(?<![\p{L}])(?:you|they|he|she|candidate)\s+(?:were|was|are|is)\s+(?:reading|looking|glancing|checking)(?![\p{L}])/iu],
+  ["were you reading", /(?<![\p{L}])(?:were|are|was)\s+(?:you|they|he|she)\s+(?:reading|looking|glancing|checking)(?![\p{L}])/iu],
+  ["because", /(?<![\p{L}])(?:away|down|aside|elsewhere|off[\s-]screen)(?![\p{L}])[^.?!]*(?<![\p{L}])because(?![\p{L}])|(?<![\p{L}])because\s+(?:you|they|he|she|the\s+candidate)(?![\p{L}])/iu],
+];
 /** Follow-ups must not point at the observation itself (FR-012). */
 export const OBSERVATION_WORDS = ["look", "looking", "looked", "eye", "eyes", "gaze", "screen", "camera",
   "reading", "read", "notes", "someone", "anyone", "else in the room"] as const;
@@ -26,9 +43,19 @@ function findWords(text: string, words: readonly string[]): string[] {
   return words.filter((w) => wordRe(w).test(text));
 }
 
-/** Banned words found in text (lower-case list entries), empty when clean. */
+/** Banned words and state-of-mind phrasings found in text (lower-case list entries / labels), empty when clean. */
 export function findBanned(text: string): string[] {
-  return findWords(text, BANNED);
+  return [...findWords(text, BANNED), ...STATE_OF_MIND.filter(([, re]) => re.test(text)).map(([label]) => label)];
+}
+
+/** Longest Interviewer Note / follow-up kept (characters). Longer model output is rejected; stored text is clipped. */
+export const MAX_NOTE_CHARS = 240;
+export const MAX_FOLLOW_UP_CHARS = 200;
+
+/** Collapses whitespace (incl. newlines) and clips to max characters, ending with "…" when clipped. */
+export function clip(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
 }
 
 const contentWords = (text: string) =>
@@ -40,6 +67,20 @@ const stem = (w: string) => w.replace(/(ing|ed|es|s)$/, "").slice(0, 6);
 /** True when the label is a general placeholder rather than a real Question topic. */
 export function isGeneralQuestion(label: string): boolean {
   return /^\(not labelled/.test(label) || /^question\s*\d+$/i.test(label.trim()) || /^introduction$/i.test(label.trim());
+}
+
+/**
+ * Removes a "(the … question)"-style aside from a note when it names a topic the Question label does not share
+ * (small models copy the prompt's "(the project question)" example onto unrelated or unlabelled questions).
+ */
+export function stripUngroundedTopic(note: string, question: string): string {
+  const labelStems = new Set(isGeneralQuestion(question) ? [] : [...contentWords(question.toLowerCase())].map(stem));
+  return note
+    .replace(/\s*\((?:the|a|an)\s+([^()]*)\)/giu, (aside, inner: string) =>
+      [...contentWords(inner)].some((w) => labelStems.has(stem(w))) ? aside : "",
+    )
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
 }
 
 /**
@@ -60,6 +101,8 @@ export function checkQuality(
   if (observed.length) problems.push(`the follow-up mentions the observation (${observed.join(", ")}); ask about the topic instead`);
   if (!followUp) problems.push("the follow-up was empty");
   if (!note) problems.push("the interviewer note was empty");
+  if (note.length > MAX_NOTE_CHARS) problems.push(`the interviewer note is longer than ${MAX_NOTE_CHARS} characters`);
+  if (followUp.length > MAX_FOLLOW_UP_CHARS) problems.push(`the follow-up is longer than ${MAX_FOLLOW_UP_CHARS} characters`);
   const neutral = banned.length === 0 && observed.length === 0;
 
   const words = followUp.split(/\s+/).filter(Boolean).length;
