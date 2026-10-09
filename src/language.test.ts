@@ -163,5 +163,7 @@ function sampleSession(): Session {
     followUp: { questionId: "q2", phase: "observing", used: 1, reObserveUntil: null, momentId: null, watchFrom: 0, askedMomentId: null },
     timeline: [{ t: 60000, kind: "question", questionId: "q2", text: "Q2 started" }],
     report: null,
+    transcript: [],
+    asr: { available: false, model: null },
   };
 }

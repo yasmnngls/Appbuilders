@@ -67,6 +67,41 @@ export interface Question {
   number: number;
   label: string;
   start: SessionTime;
+  /** How the Question began: "spoken" = detected in the Interviewer's transcribed speech; "manual" = New Question button (fallback). */
+  origin?: "spoken" | "manual";
+  /** The Interviewer's spoken question as transcribed locally, when detected from speech. */
+  text?: string;
+}
+
+/** Who a transcript segment came from. Separated by audio source, not by voice: mic = Interviewer, meeting/system audio = Candidate; "mixed" = one shared mic. */
+export type Speaker = "interviewer" | "candidate" | "mixed";
+
+/** One locally transcribed utterance (whisper.cpp on this laptop). Text only; audio is never stored. */
+export interface TranscriptSegment {
+  id: string;
+  speaker: Speaker;
+  start: SessionTime;
+  end: SessionTime;
+  text: string;
+  /** Question active when the utterance started. */
+  questionId: string | null;
+}
+
+/**
+ * What the follow-up targets and why (traceable to the Question and the transcript).
+ * gap = null means the answer already covers the Question: no follow-up is suggested.
+ */
+export interface FollowUpReasoning {
+  /** The Question as asked (spoken text, or label). */
+  question: string;
+  /** The Candidate's answer text the decision was based on (clipped). */
+  answer: string;
+  /** Short name of the missing/unclear area, e.g. "personal contribution"; null when nothing is missing. */
+  gap: string | null;
+  /** One plain sentence: what was covered and what remained unclear. */
+  reason: string;
+  /** "no-transcript" = no Candidate speech was transcribed, so no content follow-up can be grounded. */
+  basis: "transcript" | "no-transcript";
 }
 
 /** Most follow-ups the assistant will suggest within one Question (PRD §11.2). */
@@ -106,6 +141,8 @@ export interface Moment {
   askedAt: SessionTime | null;
   /** Re-observation outcome after the follow-up was asked. */
   result: "settled" | "persisting" | null;
+  /** Why this follow-up (or why none). Null while generating. */
+  reasoning?: FollowUpReasoning | null;
 }
 
 /** Where a Question stands in the Adaptive Follow-Up Loop (PRD §17). */
@@ -135,6 +172,8 @@ export interface FollowUpState {
 
 export type TimelineKind =
   | "question"
+  | "interviewer-speech"
+  | "candidate-speech"
   | "flag"
   | "moment"
   | "follow-up-asked"
@@ -175,4 +214,8 @@ export interface Session {
   followUp: FollowUpState;
   timeline: TimelineEvent[];
   report: SessionReport | null;
+  /** Local transcript (text only). Empty when local speech recognition is unavailable. */
+  transcript: TranscriptSegment[];
+  /** Local speech recognition status for this Session. */
+  asr: { available: boolean; model: string | null };
 }

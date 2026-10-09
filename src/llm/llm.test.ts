@@ -58,6 +58,8 @@ function makeSession(): Session {
     followUp: { questionId: "q2", phase: "worth_exploring", used: 0, reObserveUntil: null, momentId: "m1", watchFrom: 60000, askedMomentId: null },
     timeline: [],
     report: null,
+    transcript: [],
+    asr: { available: false, model: null },
   };
 }
 

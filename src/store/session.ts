@@ -152,7 +152,7 @@ export function setSourceReady(sourceReady: LiveState["sourceReady"]) {
 // Session lifecycle
 
 /** FR-001: a Session only starts from a confirmed Consent (the draft). Returns false, and starts nothing, without one. */
-export function startSession(input: { source: Session["source"]; speechAvailable: boolean; llmModel: string | null }): boolean {
+export function startSession(input: { source: Session["source"]; speechAvailable: boolean; llmModel: string | null; asr?: Session["asr"] }): boolean {
   const draft = state.draft;
   if (!draft) return false;
   const q1: Question = { id: uid(), number: 1, label: "Introduction", start: 0 };
@@ -178,6 +178,8 @@ export function startSession(input: { source: Session["source"]; speechAvailable
       followUp,
       timeline: [{ t: 0, kind: "question", questionId: q1.id, text: `Question started — ${questionLabel(q1)}` }],
       report: null,
+      transcript: [],
+      asr: input.asr ?? { available: false, model: null },
     },
   });
   return true;
