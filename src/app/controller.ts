@@ -453,11 +453,14 @@ function requestSuggestion(momentId: string) {
     S.setLlm({ status: store.get().llm === "unavailable" ? "unavailable" : "busy" });
     let sug;
     try {
-      sug = signal?.aborted ? fallbackSuggestion(s, m) : await writeSuggestion(s, m, signal);
+      // The model is called once the Candidate's utterance ends, on the latest transcript.
+      sug = signal?.aborted
+        ? fallbackSuggestion(s, m)
+        : await writeSuggestion(s, m, signal, { candidateSpeaking: () => store.get().speech === "speaking", latest: () => store.get().session });
     } catch {
       sug = fallbackSuggestion(s, m);
     }
-    S.updateMoment(momentId, { note: sug.note, followUp: sug.followUp, quality: sug.quality, suggestion: sug.source });
+    S.updateMoment(momentId, { note: sug.note, followUp: sug.followUp, quality: sug.quality, suggestion: sug.source, reasoning: sug.reasoning });
     if (store.get().llm === "busy") S.setLlm({ status: "ready" });
     syncLlm();
   });
